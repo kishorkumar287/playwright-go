@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -210,7 +210,7 @@ func TestPageUnrouteShouldNotWaitForPendingHandlersToComplete(t *testing.T) {
 
 	secondHandlerCalled := false
 
-	require.NoError(t, context.Route(regexp.MustCompile(".*"), func(route playwright.Route) {
+	require.NoError(t, page.Route(regexp.MustCompile(".*"), func(route playwright.Route) {
 		secondHandlerCalled = true
 		require.NoError(t, route.Continue())
 	}))

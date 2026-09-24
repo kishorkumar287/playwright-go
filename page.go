@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 
-	"github.com/playwright-community/playwright-go/internal/safe"
+	"github.com/mxschmitt/playwright-go/internal/safe"
 )
 
 type pageImpl struct {
@@ -21,6 +23,7 @@ type pageImpl struct {
 	touchscreen     *touchscreenImpl
 	timeoutSettings *timeoutSettings
 	browserContext  *browserContextImpl
+	framesMu        sync.RWMutex
 	frames          []Frame
 	workers         []Worker
 	mainFrame       Frame
@@ -30,9 +33,19 @@ type pageImpl struct {
 	ownedContext    BrowserContext
 	bindings        *safe.SyncMap[string, BindingCallFunction]
 	closeReason     *string
-	closeWasCalled  bool
+	closeWasCalled  atomic.Bool
 	harRouters      []*harRouter
 	locatorHandlers map[float64]*locatorHandlerEntry
+	localStorage    *webStorageImpl
+	sessionStorage  *webStorageImpl
+}
+
+func (p *pageImpl) LocalStorage() WebStorage {
+	return p.localStorage
+}
+
+func (p *pageImpl) SessionStorage() WebStorage {
+	return p.sessionStorage
 }
 
 type locatorHandlerEntry struct {
@@ -73,22 +86,15 @@ func (p *pageImpl) AddLocatorHandler(locator Locator, handler func(Locator), opt
 }
 
 func (p *pageImpl) onLocatorHandlerTriggered(uid float64) {
-	var remove *bool
-	handler, ok := p.locatorHandlers[uid]
-	if !ok {
-		return
-	}
-	if handler.times != nil {
-		*handler.times--
-		if *handler.times == 0 {
-			remove = Bool(true)
-		}
-	}
+	remove := false
+	// The server blocks the intercepted action until we resolve, so this must
+	// always fire — even for an unknown uid (e.g. removed while a trigger was in
+	// flight). Mirrors the upstream try/finally.
 	defer func() {
-		if remove != nil && *remove {
+		if remove {
 			delete(p.locatorHandlers, uid)
 		}
-		_, _ = p.connection.WrapAPICall(func() (interface{}, error) {
+		_, _ = p.connection.WrapAPICall(func() (any, error) {
 			_, err := p.channel.Send("resolveLocatorHandlerNoReply", map[string]any{
 				"uid":    uid,
 				"remove": remove,
@@ -97,17 +103,25 @@ func (p *pageImpl) onLocatorHandlerTriggered(uid float64) {
 		}, true)
 	}()
 
-	handler.handler(handler.locator)
+	handler, ok := p.locatorHandlers[uid]
+	if ok && (handler.times == nil || *handler.times != 0) {
+		if handler.times != nil {
+			*handler.times--
+		}
+		handler.handler(handler.locator)
+	}
+	remove = ok && handler.times != nil && *handler.times == 0
 }
 
 func (p *pageImpl) RemoveLocatorHandler(locator Locator) error {
+	// Remove every handler whose locator matches, not just the first one,
+	// matching upstream removeLocatorHandler.
 	for uid := range p.locatorHandlers {
 		if p.locatorHandlers[uid].locator.equals(locator) {
 			delete(p.locatorHandlers, uid)
 			p.channel.SendNoReply("unregisterLocatorHandler", map[string]any{
 				"uid": uid,
 			})
-			return nil
 		}
 	}
 	return nil
@@ -122,15 +136,32 @@ func (b *pageImpl) Clock() Clock {
 }
 
 func (p *pageImpl) Close(options ...PageCloseOptions) error {
+	runBeforeUnload := false
 	if len(options) == 1 {
 		p.closeReason = options[0].Reason
+		runBeforeUnload = options[0].RunBeforeUnload != nil && *options[0].RunBeforeUnload
 	}
-	p.closeWasCalled = true
-	_, err := p.channel.Send("close", options)
-	if err == nil && p.ownedContext != nil {
+	// Only mark the page as being closed when it is actually torn down. With
+	// runBeforeUnload the page is not necessarily closing, so route handling
+	// must keep working.
+	if !runBeforeUnload {
+		p.closeWasCalled.Store(true)
+	}
+	var err error
+	if p.ownedContext != nil {
 		err = p.ownedContext.Close()
+	} else if runBeforeUnload {
+		// Upstream split Page.close into close and runBeforeUnload; the latter
+		// takes no params and the close params no longer carry runBeforeUnload.
+		_, err = p.channel.Send("runBeforeUnload")
+	} else {
+		params := map[string]any{}
+		if p.closeReason != nil {
+			params["reason"] = *p.closeReason
+		}
+		_, err = p.channel.Send("close", params)
 	}
-	if errors.Is(err, ErrTargetClosed) || (len(options) == 1 && options[0].RunBeforeUnload != nil && *(options[0].RunBeforeUnload)) {
+	if errors.Is(err, ErrTargetClosed) && !runBeforeUnload {
 		return nil
 	}
 	return err
@@ -154,10 +185,15 @@ func (p *pageImpl) Opener() (Page, error) {
 	channel := p.initializer["opener"]
 	channelOwner := fromNullableChannel(channel)
 	if channelOwner == nil {
-		// not popup page or opener has been closed
+		// not a popup page
 		return nil, nil
 	}
-	return channelOwner.(*pageImpl), nil
+	opener := channelOwner.(*pageImpl)
+	if opener.IsClosed() {
+		// Opener has been closed; upstream returns null in this case.
+		return nil, nil
+	}
+	return opener, nil
 }
 
 func (p *pageImpl) MainFrame() Frame {
@@ -174,12 +210,16 @@ func (p *pageImpl) Frame(options ...PageFrameOptions) Frame {
 		matcher = newURLMatcher(option.URL, p.browserContext.options.BaseURL)
 	}
 
-	for _, f := range p.frames {
-		if option.Name != nil && f.Name() == *option.Name {
-			return f
+	for _, f := range p.Frames() {
+		// When a name is specified, match strictly by name and never consult the
+		// URL, matching upstream.
+		if option.Name != nil {
+			if f.Name() == *option.Name {
+				return f
+			}
+			continue
 		}
-
-		if option.URL != nil && matcher != nil && matcher.Matches(f.URL()) {
+		if matcher != nil && matcher.Matches(f.URL()) {
 			return f
 		}
 	}
@@ -188,21 +228,19 @@ func (p *pageImpl) Frame(options ...PageFrameOptions) Frame {
 }
 
 func (p *pageImpl) Frames() []Frame {
-	return p.frames
+	p.framesMu.RLock()
+	defer p.framesMu.RUnlock()
+	return slices.Clone(p.frames)
 }
 
 func (p *pageImpl) SetDefaultNavigationTimeout(timeout float64) {
+	// Upstream only updates the client-side timeout settings; there is no
+	// corresponding protocol method (the old *NoReply methods were removed).
 	p.timeoutSettings.SetDefaultNavigationTimeout(&timeout)
-	p.channel.SendNoReplyInternal("setDefaultNavigationTimeoutNoReply", map[string]interface{}{
-		"timeout": timeout,
-	})
 }
 
 func (p *pageImpl) SetDefaultTimeout(timeout float64) {
 	p.timeoutSettings.SetDefaultTimeout(&timeout)
-	p.channel.SendNoReplyInternal("setDefaultTimeoutNoReply", map[string]interface{}{
-		"timeout": timeout,
-	})
 }
 
 func (p *pageImpl) QuerySelector(selector string, options ...PageQuerySelectorOptions) (ElementHandle, error) {
@@ -223,29 +261,34 @@ func (p *pageImpl) WaitForSelector(selector string, options ...PageWaitForSelect
 	return p.mainFrame.WaitForSelector(selector)
 }
 
-func (p *pageImpl) DispatchEvent(selector string, typ string, eventInit interface{}, options ...PageDispatchEventOptions) error {
+func (p *pageImpl) DispatchEvent(selector string, typ string, eventInit any, options ...PageDispatchEventOptions) error {
 	if len(options) == 1 {
 		return p.mainFrame.DispatchEvent(selector, typ, eventInit, FrameDispatchEventOptions(options[0]))
 	}
 	return p.mainFrame.DispatchEvent(selector, typ, eventInit)
 }
 
-func (p *pageImpl) Evaluate(expression string, arg ...interface{}) (interface{}, error) {
+func (p *pageImpl) Evaluate(expression string, arg ...any) (any, error) {
 	return p.mainFrame.Evaluate(expression, arg...)
 }
 
-func (p *pageImpl) EvaluateHandle(expression string, arg ...interface{}) (JSHandle, error) {
+func (p *pageImpl) EvaluateHandle(expression string, arg ...any) (JSHandle, error) {
 	return p.mainFrame.EvaluateHandle(expression, arg...)
 }
 
-func (p *pageImpl) EvalOnSelector(selector string, expression string, arg interface{}, options ...PageEvalOnSelectorOptions) (interface{}, error) {
+func (p *pageImpl) HideHighlight() error {
+	_, err := p.channel.Send("hideHighlight")
+	return err
+}
+
+func (p *pageImpl) EvalOnSelector(selector string, expression string, arg any, options ...PageEvalOnSelectorOptions) (any, error) {
 	if len(options) == 1 {
 		return p.mainFrame.EvalOnSelector(selector, expression, arg, FrameEvalOnSelectorOptions(options[0]))
 	}
 	return p.mainFrame.EvalOnSelector(selector, expression, arg)
 }
 
-func (p *pageImpl) EvalOnSelectorAll(selector string, expression string, arg ...interface{}) (interface{}, error) {
+func (p *pageImpl) EvalOnSelectorAll(selector string, expression string, arg ...any) (any, error) {
 	return p.mainFrame.EvalOnSelectorAll(selector, expression, arg...)
 }
 
@@ -258,7 +301,7 @@ func (p *pageImpl) AddStyleTag(options PageAddStyleTagOptions) (ElementHandle, e
 }
 
 func (p *pageImpl) SetExtraHTTPHeaders(headers map[string]string) error {
-	_, err := p.channel.Send("setExtraHTTPHeaders", map[string]interface{}{
+	_, err := p.channel.Send("setExtraHTTPHeaders", map[string]any{
 		"headers": serializeMapToNameAndValue(headers),
 	})
 	return err
@@ -268,11 +311,10 @@ func (p *pageImpl) URL() string {
 	return p.mainFrame.URL()
 }
 
-func (p *pageImpl) Unroute(url interface{}, handlers ...routeHandler) error {
+func (p *pageImpl) Unroute(url any, handlers ...routeHandler) error {
 	p.Lock()
-	defer p.Unlock()
-
 	removed, remaining, err := unroute(p.routes, url, handlers...)
+	p.Unlock()
 	if err != nil {
 		return err
 	}
@@ -280,7 +322,9 @@ func (p *pageImpl) Unroute(url interface{}, handlers ...routeHandler) error {
 }
 
 func (p *pageImpl) unrouteInternal(removed []*routeHandlerEntry, remaining []*routeHandlerEntry, behavior *UnrouteBehavior) error {
+	p.Lock()
 	p.routes = remaining
+	p.Unlock()
 	err := p.updateInterceptionPatterns()
 	if err != nil {
 		return err
@@ -313,9 +357,10 @@ func (p *pageImpl) UnrouteAll(options ...PageUnrouteAllOptions) error {
 		behavior = options[0].Behavior
 	}
 	p.Lock()
-	defer p.Unlock()
+	removed := p.routes
+	p.Unlock()
 	defer p.disposeHarRouters()
-	return p.unrouteInternal(p.routes, []*routeHandlerEntry{}, behavior)
+	return p.unrouteInternal(removed, []*routeHandlerEntry{}, behavior)
 }
 
 func (p *pageImpl) Content() (string, error) {
@@ -337,7 +382,11 @@ func (p *pageImpl) Goto(url string, options ...PageGotoOptions) (Response, error
 }
 
 func (p *pageImpl) Reload(options ...PageReloadOptions) (Response, error) {
-	channel, err := p.channel.Send("reload", options)
+	var timeout *float64
+	if len(options) == 1 {
+		timeout = options[0].Timeout
+	}
+	channel, err := p.channel.SendWithTimeout("reload", resolveNavigationTimeout(p.timeoutSettings, timeout), options)
 	if err != nil {
 		return nil, err
 	}
@@ -356,7 +405,11 @@ func (p *pageImpl) WaitForLoadState(options ...PageWaitForLoadStateOptions) erro
 }
 
 func (p *pageImpl) GoBack(options ...PageGoBackOptions) (Response, error) {
-	channel, err := p.channel.Send("goBack", options)
+	var timeout *float64
+	if len(options) == 1 {
+		timeout = options[0].Timeout
+	}
+	channel, err := p.channel.SendWithTimeout("goBack", resolveNavigationTimeout(p.timeoutSettings, timeout), options)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +422,11 @@ func (p *pageImpl) GoBack(options ...PageGoBackOptions) (Response, error) {
 }
 
 func (p *pageImpl) GoForward(options ...PageGoForwardOptions) (Response, error) {
-	channel, err := p.channel.Send("goForward", options)
+	var timeout *float64
+	if len(options) == 1 {
+		timeout = options[0].Timeout
+	}
+	channel, err := p.channel.SendWithTimeout("goForward", resolveNavigationTimeout(p.timeoutSettings, timeout), options)
 	if err != nil {
 		return nil, err
 	}
@@ -390,8 +447,8 @@ func (p *pageImpl) EmulateMedia(options ...PageEmulateMediaOptions) error {
 }
 
 func (p *pageImpl) SetViewportSize(width, height int) error {
-	_, err := p.channel.Send("setViewportSize", map[string]interface{}{
-		"viewportSize": map[string]interface{}{
+	_, err := p.channel.Send("setViewportSize", map[string]any{
+		"viewportSize": map[string]any{
 			"width":  width,
 			"height": height,
 		},
@@ -448,19 +505,25 @@ func (p *pageImpl) Request() APIRequestContext {
 
 func (p *pageImpl) Screenshot(options ...PageScreenshotOptions) ([]byte, error) {
 	var path *string
-	overrides := map[string]interface{}{}
+	overrides := map[string]any{}
 	if len(options) == 1 {
 		path = options[0].Path
 		options[0].Path = nil
+		// Infer the image type from the path extension when not set, matching upstream.
+		typ, err := determineScreenshotType(path, options[0].Type)
+		if err != nil {
+			return nil, err
+		}
+		options[0].Type = typ
 		if options[0].Mask != nil {
-			masks := make([]map[string]interface{}, 0)
+			masks := make([]map[string]any, 0)
 			for _, m := range options[0].Mask {
 				if m.Err() != nil { // ErrLocatorNotSameFrame
 					return nil, m.Err()
 				}
 				l, ok := m.(*locatorImpl)
 				if ok {
-					masks = append(masks, map[string]interface{}{
+					masks = append(masks, map[string]any{
 						"selector": l.selector,
 						"frame":    l.frame.channel,
 					})
@@ -469,7 +532,11 @@ func (p *pageImpl) Screenshot(options ...PageScreenshotOptions) ([]byte, error) 
 			overrides["mask"] = masks
 		}
 	}
-	data, err := p.channel.Send("screenshot", options, overrides)
+	var screenshotTimeout *float64
+	if len(options) == 1 {
+		screenshotTimeout = options[0].Timeout
+	}
+	data, err := p.channel.SendWithTimeout("screenshot", resolveTimeout(p.timeoutSettings, screenshotTimeout), options, overrides)
 	if err != nil {
 		return nil, err
 	}
@@ -478,6 +545,9 @@ func (p *pageImpl) Screenshot(options ...PageScreenshotOptions) ([]byte, error) 
 		return nil, fmt.Errorf("could not decode base64 :%w", err)
 	}
 	if path != nil {
+		if err := os.MkdirAll(filepath.Dir(*path), 0o777); err != nil {
+			return nil, err
+		}
 		if err := os.WriteFile(*path, image, 0o644); err != nil {
 			return nil, err
 		}
@@ -499,6 +569,9 @@ func (p *pageImpl) PDF(options ...PagePdfOptions) ([]byte, error) {
 		return nil, fmt.Errorf("could not decode base64 :%w", err)
 	}
 	if path != nil {
+		if err := os.MkdirAll(filepath.Dir(*path), 0o777); err != nil {
+			return nil, err
+		}
 		if err := os.WriteFile(*path, pdf, 0o644); err != nil {
 			return nil, err
 		}
@@ -513,13 +586,13 @@ func (p *pageImpl) Click(selector string, options ...PageClickOptions) error {
 	return p.mainFrame.Click(selector)
 }
 
-func (p *pageImpl) WaitForEvent(event string, options ...PageWaitForEventOptions) (interface{}, error) {
+func (p *pageImpl) WaitForEvent(event string, options ...PageWaitForEventOptions) (any, error) {
 	return p.waiterForEvent(event, options...).Wait()
 }
 
 func (p *pageImpl) waiterForEvent(event string, options ...PageWaitForEventOptions) *waiter {
 	timeout := p.timeoutSettings.Timeout()
-	var predicate interface{} = nil
+	var predicate any = nil
 	if len(options) == 1 {
 		if options[0].Timeout != nil {
 			timeout = *options[0].Timeout
@@ -527,12 +600,17 @@ func (p *pageImpl) waiterForEvent(event string, options ...PageWaitForEventOptio
 		predicate = options[0].Predicate
 	}
 	waiter := newWaiter().WithTimeout(timeout)
-	waiter.RejectOnEvent(p, "close", p.closeErrorWithReason())
-	waiter.RejectOnEvent(p, "crash", errors.New("page crashed"))
+	// Don't reject on the very event being awaited.
+	if event != "crash" {
+		waiter.RejectOnEvent(p, "crash", errors.New("page crashed"))
+	}
+	if event != "close" {
+		waiter.RejectOnEvent(p, "close", p.closeErrorWithReason())
+	}
 	return waiter.WaitForEvent(p, event, predicate)
 }
 
-func (p *pageImpl) waiterForRequest(url interface{}, options ...PageExpectRequestOptions) *waiter {
+func (p *pageImpl) waiterForRequest(urlOrPredicate any, options ...PageExpectRequestOptions) *waiter {
 	option := PageExpectRequestOptions{}
 	if len(options) == 1 {
 		option = options[0]
@@ -541,10 +619,18 @@ func (p *pageImpl) waiterForRequest(url interface{}, options ...PageExpectReques
 		option.Timeout = Float(p.timeoutSettings.Timeout())
 	}
 	var matcher *urlMatcher
-	if url != nil {
-		matcher = newURLMatcher(url, p.browserContext.options.BaseURL)
+	var matchRequest func(Request) bool
+	switch v := urlOrPredicate.(type) {
+	case nil:
+	case func(Request) bool:
+		matchRequest = v
+	default:
+		matcher = newURLMatcher(urlOrPredicate, p.browserContext.options.BaseURL)
 	}
 	predicate := func(req *requestImpl) bool {
+		if matchRequest != nil {
+			return matchRequest(req)
+		}
 		if matcher != nil {
 			return matcher.Matches(req.URL())
 		}
@@ -552,10 +638,13 @@ func (p *pageImpl) waiterForRequest(url interface{}, options ...PageExpectReques
 	}
 
 	waiter := newWaiter().WithTimeout(*option.Timeout)
+	// Fail fast if the page crashes or closes while waiting, matching upstream.
+	waiter.RejectOnEvent(p, "crash", errors.New("page crashed"))
+	waiter.RejectOnEvent(p, "close", p.closeErrorWithReason())
 	return waiter.WaitForEvent(p, "request", predicate)
 }
 
-func (p *pageImpl) waiterForResponse(url interface{}, options ...PageExpectResponseOptions) *waiter {
+func (p *pageImpl) waiterForResponse(urlOrPredicate any, options ...PageExpectResponseOptions) *waiter {
 	option := PageExpectResponseOptions{}
 	if len(options) == 1 {
 		option = options[0]
@@ -564,21 +653,32 @@ func (p *pageImpl) waiterForResponse(url interface{}, options ...PageExpectRespo
 		option.Timeout = Float(p.timeoutSettings.Timeout())
 	}
 	var matcher *urlMatcher
-	if url != nil {
-		matcher = newURLMatcher(url, p.browserContext.options.BaseURL)
+	var matchResponse func(Response) bool
+	switch v := urlOrPredicate.(type) {
+	case nil:
+	case func(Response) bool:
+		matchResponse = v
+	default:
+		matcher = newURLMatcher(urlOrPredicate, p.browserContext.options.BaseURL)
 	}
-	predicate := func(req *responseImpl) bool {
+	predicate := func(res *responseImpl) bool {
+		if matchResponse != nil {
+			return matchResponse(res)
+		}
 		if matcher != nil {
-			return matcher.Matches(req.URL())
+			return matcher.Matches(res.URL())
 		}
 		return true
 	}
 
 	waiter := newWaiter().WithTimeout(*option.Timeout)
+	// Fail fast if the page crashes or closes while waiting, matching upstream.
+	waiter.RejectOnEvent(p, "crash", errors.New("page crashed"))
+	waiter.RejectOnEvent(p, "close", p.closeErrorWithReason())
 	return waiter.WaitForEvent(p, "response", predicate)
 }
 
-func (p *pageImpl) ExpectEvent(event string, cb func() error, options ...PageExpectEventOptions) (interface{}, error) {
+func (p *pageImpl) ExpectEvent(event string, cb func() error, options ...PageExpectEventOptions) (any, error) {
 	if len(options) == 1 {
 		return p.waiterForEvent(event, PageWaitForEventOptions(options[0])).RunAndWait(cb)
 	}
@@ -644,16 +744,16 @@ func (p *pageImpl) ExpectPopup(cb func() error, options ...PageExpectPopupOption
 	return ret.(*pageImpl), err
 }
 
-func (p *pageImpl) ExpectResponse(url interface{}, cb func() error, options ...PageExpectResponseOptions) (Response, error) {
-	ret, err := p.waiterForResponse(url, options...).RunAndWait(cb)
+func (p *pageImpl) ExpectResponse(urlOrPredicate any, cb func() error, options ...PageExpectResponseOptions) (Response, error) {
+	ret, err := p.waiterForResponse(urlOrPredicate, options...).RunAndWait(cb)
 	if ret == nil {
 		return nil, err
 	}
 	return ret.(*responseImpl), err
 }
 
-func (p *pageImpl) ExpectRequest(url interface{}, cb func() error, options ...PageExpectRequestOptions) (Request, error) {
-	ret, err := p.waiterForRequest(url, options...).RunAndWait(cb)
+func (p *pageImpl) ExpectRequest(urlOrPredicate any, cb func() error, options ...PageExpectRequestOptions) (Request, error) {
+	ret, err := p.waiterForRequest(urlOrPredicate, options...).RunAndWait(cb)
 	if ret == nil {
 		return nil, err
 	}
@@ -699,10 +799,10 @@ func (p *pageImpl) ExpectWorker(cb func() error, options ...PageExpectWorkerOpti
 	return ret.(*workerImpl), err
 }
 
-func (p *pageImpl) Route(url interface{}, handler routeHandler, times ...int) error {
+func (p *pageImpl) Route(url any, handler routeHandler, times ...int) error {
 	p.Lock()
-	defer p.Unlock()
 	p.routes = slices.Insert(p.routes, 0, newRouteHandlerEntry(newURLMatcher(url, p.browserContext.options.BaseURL), handler, times...))
+	p.Unlock()
 	return p.updateInterceptionPatterns()
 }
 
@@ -734,9 +834,9 @@ func (p *pageImpl) AddInitScript(script Script) error {
 		if err != nil {
 			return err
 		}
-		source = string(content)
+		source = addSourceURLToScript(string(content), *script.Path)
 	}
-	_, err := p.channel.Send("addInitScript", map[string]interface{}{
+	_, err := p.channel.Send("addInitScript", map[string]any{
 		"source": source,
 	})
 	return err
@@ -744,6 +844,37 @@ func (p *pageImpl) AddInitScript(script Script) error {
 
 func (p *pageImpl) Keyboard() Keyboard {
 	return p.keyboard
+}
+
+func (p *pageImpl) ConsoleMessages(options ...PageConsoleMessagesOptions) ([]ConsoleMessage, error) {
+	result, err := p.channel.Send("consoleMessages", options)
+	if err != nil {
+		return nil, err
+	}
+	messages := result.([]any)
+	consoleMessages := make([]ConsoleMessage, len(messages))
+	for i, m := range messages {
+		cm := newConsoleMessage(m.(map[string]any))
+		// The consoleMessages result entries do not carry a page channel
+		// (unlike the live `console` event), so set the owning page
+		// explicitly to mirror upstream behavior.
+		cm.page = p
+		consoleMessages[i] = cm
+	}
+	return consoleMessages, nil
+}
+
+func (p *pageImpl) Requests() ([]Request, error) {
+	result, err := p.channel.Send("requests", nil)
+	if err != nil {
+		return nil, err
+	}
+	requests := result.([]any)
+	reqs := make([]Request, len(requests))
+	for i, r := range requests {
+		reqs[i] = fromChannel(r).(*requestImpl)
+	}
+	return reqs, nil
 }
 
 func (p *pageImpl) Mouse() Mouse {
@@ -756,9 +887,18 @@ func (p *pageImpl) RouteFromHAR(har string, options ...PageRouteFromHAROptions) 
 		opt = options[0]
 	}
 	if opt.Update != nil && *opt.Update {
+		var updateContent *HarContentPolicy
+		switch opt.UpdateContent {
+		case RouteFromHarUpdateContentPolicyAttach:
+			updateContent = HarContentPolicyAttach
+		case RouteFromHarUpdateContentPolicyEmbed:
+			updateContent = HarContentPolicyEmbed
+		}
 		return p.browserContext.recordIntoHar(har, browserContextRecordIntoHarOptions{
-			Page: p,
-			URL:  opt.URL,
+			Page:          p,
+			URL:           opt.URL,
+			UpdateContent: updateContent,
+			UpdateMode:    opt.UpdateMode,
 		})
 	}
 	notFound := opt.NotFound
@@ -774,11 +914,11 @@ func (p *pageImpl) Touchscreen() Touchscreen {
 	return p.touchscreen
 }
 
-func newPage(parent *channelOwner, objectType string, guid string, initializer map[string]interface{}) *pageImpl {
+func newPage(parent *channelOwner, objectType string, guid string, initializer map[string]any) *pageImpl {
 	viewportSize := &Size{}
-	if _, ok := initializer["viewportSize"].(map[string]interface{}); ok {
-		viewportSize.Height = int(initializer["viewportSize"].(map[string]interface{})["height"].(float64))
-		viewportSize.Width = int(initializer["viewportSize"].(map[string]interface{})["width"].(float64))
+	if _, ok := initializer["viewportSize"].(map[string]any); ok {
+		viewportSize.Height = int(initializer["viewportSize"].(map[string]any)["height"].(float64))
+		viewportSize.Width = int(initializer["viewportSize"].(map[string]any)["width"].(float64))
 	}
 	bt := &pageImpl{
 		workers:         make([]Worker, 0),
@@ -789,6 +929,9 @@ func newPage(parent *channelOwner, objectType string, guid string, initializer m
 		locatorHandlers: make(map[float64]*locatorHandlerEntry, 0),
 	}
 	bt.createChannelOwner(bt, parent, objectType, guid, initializer)
+	if closed, ok := initializer["isClosed"].(bool); ok {
+		bt.isClosed = closed
+	}
 	bt.browserContext = fromChannel(parent.channel).(*browserContextImpl)
 	bt.timeoutSettings = newTimeoutSettings(bt.browserContext.timeoutSettings)
 	mainframe := fromChannel(initializer["mainFrame"]).(*frameImpl)
@@ -798,7 +941,9 @@ func newPage(parent *channelOwner, objectType string, guid string, initializer m
 	bt.mouse = newMouse(bt.channel)
 	bt.keyboard = newKeyboard(bt.channel)
 	bt.touchscreen = newTouchscreen(bt.channel)
-	bt.channel.On("bindingCall", func(params map[string]interface{}) {
+	bt.localStorage = newWebStorage(bt, "local")
+	bt.sessionStorage = newWebStorage(bt, "session")
+	bt.channel.On("bindingCall", func(params map[string]any) {
 		bt.onBinding(fromChannel(params["binding"]).(*bindingCallImpl))
 	})
 	bt.channel.On("close", bt.onClose)
@@ -808,53 +953,65 @@ func newPage(parent *channelOwner, objectType string, guid string, initializer m
 	bt.channel.On("domcontentloaded", func() {
 		bt.Emit("domcontentloaded", bt)
 	})
-	bt.channel.On("fileChooser", func(ev map[string]interface{}) {
+	bt.channel.On("fileChooser", func(ev map[string]any) {
 		bt.Emit("filechooser", newFileChooser(bt, fromChannel(ev["element"]).(*elementHandleImpl), ev["isMultiple"].(bool)))
 	})
-	bt.channel.On("frameAttached", func(ev map[string]interface{}) {
+	bt.channel.On("frameAttached", func(ev map[string]any) {
 		bt.onFrameAttached(fromChannel(ev["frame"]).(*frameImpl))
 	})
-	bt.channel.On("frameDetached", func(ev map[string]interface{}) {
+	bt.channel.On("frameDetached", func(ev map[string]any) {
 		bt.onFrameDetached(fromChannel(ev["frame"]).(*frameImpl))
 	})
-	bt.channel.On("locatorHandlerTriggered", func(ev map[string]interface{}) {
+	bt.channel.On("viewportSizeChanged", func(ev map[string]any) {
+		// Keep viewportSize in sync with server-driven changes (e.g. a sized popup).
+		if vs, ok := ev["viewportSize"].(map[string]any); ok {
+			bt.viewportSize = &Size{
+				Width:  int(vs["width"].(float64)),
+				Height: int(vs["height"].(float64)),
+			}
+		}
+	})
+	bt.channel.On("locatorHandlerTriggered", func(ev map[string]any) {
 		bt.channel.CreateTask(func() {
 			bt.onLocatorHandlerTriggered(ev["uid"].(float64))
 		})
 	})
 	bt.channel.On(
-		"load", func(ev map[string]interface{}) {
+		"load", func(ev map[string]any) {
 			bt.Emit("load", bt)
 		},
 	)
-	bt.channel.On("popup", func(ev map[string]interface{}) {
+	bt.channel.On("popup", func(ev map[string]any) {
 		bt.Emit("popup", fromChannel(ev["page"]).(*pageImpl))
 	})
-	bt.channel.On("route", func(ev map[string]interface{}) {
+	bt.channel.On("route", func(ev map[string]any) {
 		bt.channel.CreateTask(func() {
 			bt.onRoute(fromChannel(ev["route"]).(*routeImpl))
 		})
 	})
-	bt.channel.On("download", func(ev map[string]interface{}) {
+	bt.channel.On("download", func(ev map[string]any) {
 		url := ev["url"].(string)
 		suggestedFilename := ev["suggestedFilename"].(string)
 		artifact := fromChannel(ev["artifact"]).(*artifactImpl)
-		bt.Emit("download", newDownload(bt, url, suggestedFilename, artifact))
+		download := newDownload(bt, url, suggestedFilename, artifact)
+		bt.Emit("download", download)
+		bt.browserContext.Emit("download", download)
 	})
-	bt.channel.On("video", func(params map[string]interface{}) {
-		artifact := fromChannel(params["artifact"]).(*artifactImpl)
+	// PW 1.59+: video artifact comes from page initializer
+	if videoChannel, ok := initializer["video"]; ok && videoChannel != nil {
+		artifact := fromChannel(videoChannel).(*artifactImpl)
 		bt.Video().(*videoImpl).artifactReady(artifact)
-	})
-	bt.channel.On("webSocket", func(ev map[string]interface{}) {
+	}
+	bt.channel.On("webSocket", func(ev map[string]any) {
 		bt.Emit("websocket", fromChannel(ev["webSocket"]).(*webSocketImpl))
 	})
-	bt.channel.On("webSocketRoute", func(ev map[string]interface{}) {
+	bt.channel.On("webSocketRoute", func(ev map[string]any) {
 		bt.channel.CreateTask(func() {
 			bt.onWebSocketRoute(fromChannel(ev["webSocketRoute"]).(*webSocketRouteImpl))
 		})
 	})
 
-	bt.channel.On("worker", func(ev map[string]interface{}) {
+	bt.channel.On("worker", func(ev map[string]any) {
 		bt.onWorker(fromChannel(ev["worker"]).(*workerImpl))
 	})
 	bt.closedOrCrashed = make(chan error, 1)
@@ -876,7 +1033,7 @@ func newPage(parent *channelOwner, objectType string, guid string, initializer m
 		"request":         "request",
 		"response":        "response",
 		"requestfinished": "requestFinished",
-		"responsefailed":  "responseFailed",
+		"requestfailed":   "requestFailed",
 		"filechooser":     "fileChooser",
 	})
 
@@ -900,22 +1057,40 @@ func (p *pageImpl) onBinding(binding *bindingCallImpl) {
 
 func (p *pageImpl) onFrameAttached(frame *frameImpl) {
 	frame.page = p
+	p.framesMu.Lock()
 	p.frames = append(p.frames, frame)
+	p.framesMu.Unlock()
 	p.Emit("frameattached", frame)
+	p.browserContext.Emit("frameattached", frame)
 }
 
 func (p *pageImpl) onFrameDetached(frame *frameImpl) {
 	frame.detached = true
+	p.framesMu.Lock()
 	frames := make([]Frame, 0)
 	for i := 0; i < len(p.frames); i++ {
 		if p.frames[i] != frame {
-			frames = append(frames, frame)
+			frames = append(frames, p.frames[i])
 		}
 	}
 	if len(frames) != len(p.frames) {
 		p.frames = frames
 	}
+	p.framesMu.Unlock()
+	// Remove the frame from its parent's childFrames so ChildFrames() doesn't
+	// keep returning a detached ghost frame (matches upstream).
+	if frame.parentFrame != nil {
+		parent := frame.parentFrame.(*frameImpl)
+		childFrames := make([]Frame, 0, len(parent.childFrames))
+		for _, child := range parent.childFrames {
+			if child != frame {
+				childFrames = append(childFrames, child)
+			}
+		}
+		parent.childFrames = childFrames
+	}
 	p.Emit("framedetached", frame)
+	p.browserContext.Emit("framedetached", frame)
 }
 
 func (p *pageImpl) onRoute(route *routeImpl) {
@@ -926,37 +1101,46 @@ func (p *pageImpl) onRoute(route *routeImpl) {
 	p.Unlock()
 
 	checkInterceptionIfNeeded := func() {
+		// Do not hold the page mutex across the protocol round-trip; dispatch
+		// may need to run other handlers before the reply can be delivered.
 		p.Lock()
-		defer p.Unlock()
-		if len(p.routes) == 0 {
-			_, err := p.connection.WrapAPICall(func() (interface{}, error) {
-				err := p.updateInterceptionPatterns()
-				return nil, err
-			}, true)
-			if err != nil {
-				logger.Error("could not update interception patterns", "error", err)
-			}
+		empty := len(p.routes) == 0
+		p.Unlock()
+		if !empty {
+			return
+		}
+		_, err := p.connection.WrapAPICall(func() (any, error) {
+			err := p.updateInterceptionPatterns()
+			return nil, err
+		}, true)
+		if err != nil {
+			logger.Error("could not update interception patterns", "error", err)
 		}
 	}
 
 	url := route.Request().URL()
 	for _, handlerEntry := range routes {
-		// If the page was closed we stall all requests right away.
-		if p.closeWasCalled || p.browserContext.closeWasCalled {
+		// If the page or context was closed we stall all requests right away.
+		// Use IsClosed() for the context so a server-driven close is covered too,
+		// matching page.ts (this._closeWasCalled || this._browserContext.isClosed()).
+		if p.closeWasCalled.Load() || p.browserContext.IsClosed() {
 			return
 		}
 		if !handlerEntry.Matches(url) {
 			continue
 		}
-		if !slices.ContainsFunc(p.routes, func(entry *routeHandlerEntry) bool {
+		p.Lock()
+		stillListed := slices.ContainsFunc(p.routes, func(entry *routeHandlerEntry) bool {
 			return entry == handlerEntry
-		}) {
-			continue
-		}
-		if handlerEntry.WillExceed() {
+		})
+		if stillListed && handlerEntry.WillExceed() {
 			p.routes = slices.DeleteFunc(p.routes, func(rhe *routeHandlerEntry) bool {
 				return rhe == handlerEntry
 			})
+		}
+		p.Unlock()
+		if !stillListed {
+			continue
 		}
 		handled := handlerEntry.Handle(route)
 		checkInterceptionIfNeeded()
@@ -969,8 +1153,10 @@ func (p *pageImpl) onRoute(route *routeImpl) {
 }
 
 func (p *pageImpl) updateInterceptionPatterns() error {
+	p.Lock()
 	patterns := prepareInterceptionPatterns(p.routes)
-	_, err := p.channel.Send("setNetworkInterceptionPatterns", map[string]interface{}{
+	p.Unlock()
+	_, err := p.channel.Send("setNetworkInterceptionPatterns", map[string]any{
 		"patterns": patterns,
 	})
 	return err
@@ -1004,9 +1190,12 @@ func (p *pageImpl) onClose() {
 	}
 	p.disposeHarRouters()
 	p.Emit("close", p)
+	if p.browserContext != nil {
+		p.browserContext.Emit("pageclose", p)
+	}
 }
 
-func (p *pageImpl) SetInputFiles(selector string, files interface{}, options ...PageSetInputFilesOptions) error {
+func (p *pageImpl) SetInputFiles(selector string, files any, options ...PageSetInputFilesOptions) error {
 	if len(options) == 1 {
 		return p.mainFrame.SetInputFiles(selector, files, FrameSetInputFilesOptions(options[0]))
 	}
@@ -1031,7 +1220,7 @@ func (p *pageImpl) WaitForTimeout(timeout float64) {
 	p.mainFrame.WaitForTimeout(timeout)
 }
 
-func (p *pageImpl) WaitForFunction(expression string, arg interface{}, options ...PageWaitForFunctionOptions) (JSHandle, error) {
+func (p *pageImpl) WaitForFunction(expression string, arg any, options ...PageWaitForFunctionOptions) (JSHandle, error) {
 	if len(options) == 1 {
 		return p.mainFrame.WaitForFunction(expression, arg, FrameWaitForFunctionOptions(options[0]))
 	}
@@ -1077,25 +1266,20 @@ func (p *pageImpl) Tap(selector string, options ...PageTapOptions) error {
 }
 
 func (p *pageImpl) ExposeFunction(name string, binding ExposedFunction) error {
-	return p.ExposeBinding(name, func(source *BindingSource, args ...interface{}) interface{} {
+	return p.ExposeBinding(name, func(source *BindingSource, args ...any) any {
 		return binding(args...)
 	})
 }
 
-func (p *pageImpl) ExposeBinding(name string, binding BindingCallFunction, handle ...bool) error {
-	needsHandle := false
-	if len(handle) == 1 {
-		needsHandle = handle[0]
-	}
+func (p *pageImpl) ExposeBinding(name string, binding BindingCallFunction) error {
 	if _, ok := p.bindings.Load(name); ok {
 		return fmt.Errorf("Function '%s' has been already registered", name)
 	}
 	if _, ok := p.browserContext.bindings.Load(name); ok {
 		return fmt.Errorf("Function '%s' has been already registered in the browser context", name)
 	}
-	_, err := p.channel.Send("exposeBinding", map[string]interface{}{
-		"name":        name,
-		"needsHandle": needsHandle,
+	_, err := p.channel.Send("exposeBinding", map[string]any{
+		"name": name,
 	})
 	if err != nil {
 		return err
@@ -1184,7 +1368,7 @@ func (p *pageImpl) InputValue(selector string, options ...PageInputValueOptions)
 	return p.mainFrame.InputValue(selector)
 }
 
-func (p *pageImpl) WaitForURL(url interface{}, options ...PageWaitForURLOptions) error {
+func (p *pageImpl) WaitForURL(url any, options ...PageWaitForURLOptions) error {
 	if len(options) == 1 {
 		return p.mainFrame.WaitForURL(url, FrameWaitForURLOptions(options[0]))
 	}
@@ -1206,65 +1390,97 @@ func (p *pageImpl) Locator(selector string, options ...PageLocatorOptions) Locat
 	return p.mainFrame.Locator(selector, option)
 }
 
-func (p *pageImpl) GetByAltText(text interface{}, options ...PageGetByAltTextOptions) Locator {
+func (p *pageImpl) GetByAltText(text any, options ...PageGetByAltTextOptions) Locator {
 	exact := false
 	if len(options) == 1 {
-		if *options[0].Exact {
+		if options[0].Exact != nil && *options[0].Exact {
 			exact = true
 		}
 	}
-	return p.Locator(getByAltTextSelector(text, exact))
+	selector, err := getByAltTextSelector(text, exact)
+	if err != nil {
+		return newErrorLocator(p.mainFrame.(*frameImpl), err)
+	}
+	return p.Locator(selector)
 }
 
-func (p *pageImpl) GetByLabel(text interface{}, options ...PageGetByLabelOptions) Locator {
+func (p *pageImpl) GetByLabel(text any, options ...PageGetByLabelOptions) Locator {
 	exact := false
 	if len(options) == 1 {
-		if *options[0].Exact {
+		if options[0].Exact != nil && *options[0].Exact {
 			exact = true
 		}
 	}
-	return p.Locator(getByLabelSelector(text, exact))
+	selector, err := getByLabelSelector(text, exact)
+	if err != nil {
+		return newErrorLocator(p.mainFrame.(*frameImpl), err)
+	}
+	return p.Locator(selector)
 }
 
-func (p *pageImpl) GetByPlaceholder(text interface{}, options ...PageGetByPlaceholderOptions) Locator {
+func (p *pageImpl) GetByPlaceholder(text any, options ...PageGetByPlaceholderOptions) Locator {
 	exact := false
 	if len(options) == 1 {
-		if *options[0].Exact {
+		if options[0].Exact != nil && *options[0].Exact {
 			exact = true
 		}
 	}
-	return p.Locator(getByPlaceholderSelector(text, exact))
+	selector, err := getByPlaceholderSelector(text, exact)
+	if err != nil {
+		return newErrorLocator(p.mainFrame.(*frameImpl), err)
+	}
+	return p.Locator(selector)
 }
 
 func (p *pageImpl) GetByRole(role AriaRole, options ...PageGetByRoleOptions) Locator {
 	if len(options) == 1 {
-		return p.Locator(getByRoleSelector(role, LocatorGetByRoleOptions(options[0])))
+		selector, err := getByRoleSelector(role, LocatorGetByRoleOptions(options[0]))
+		if err != nil {
+			return newErrorLocator(p.mainFrame.(*frameImpl), err)
+		}
+		return p.Locator(selector)
 	}
-	return p.Locator(getByRoleSelector(role))
+	selector, err := getByRoleSelector(role)
+	if err != nil {
+		return newErrorLocator(p.mainFrame.(*frameImpl), err)
+	}
+	return p.Locator(selector)
 }
 
-func (p *pageImpl) GetByTestId(testId interface{}) Locator {
-	return p.Locator(getByTestIdSelector(getTestIdAttributeName(), testId))
+func (p *pageImpl) GetByTestId(testId any) Locator {
+	selector, err := getByTestIdSelector(getTestIdAttributeName(), testId)
+	if err != nil {
+		return newErrorLocator(p.mainFrame.(*frameImpl), err)
+	}
+	return p.Locator(selector)
 }
 
-func (p *pageImpl) GetByText(text interface{}, options ...PageGetByTextOptions) Locator {
+func (p *pageImpl) GetByText(text any, options ...PageGetByTextOptions) Locator {
 	exact := false
 	if len(options) == 1 {
-		if *options[0].Exact {
+		if options[0].Exact != nil && *options[0].Exact {
 			exact = true
 		}
 	}
-	return p.Locator(getByTextSelector(text, exact))
+	selector, err := getByTextSelector(text, exact)
+	if err != nil {
+		return newErrorLocator(p.mainFrame.(*frameImpl), err)
+	}
+	return p.Locator(selector)
 }
 
-func (p *pageImpl) GetByTitle(text interface{}, options ...PageGetByTitleOptions) Locator {
+func (p *pageImpl) GetByTitle(text any, options ...PageGetByTitleOptions) Locator {
 	exact := false
 	if len(options) == 1 {
-		if *options[0].Exact {
+		if options[0].Exact != nil && *options[0].Exact {
 			exact = true
 		}
 	}
-	return p.Locator(getByTitleSelector(text, exact))
+	selector, err := getByTitleSelector(text, exact)
+	if err != nil {
+		return newErrorLocator(p.mainFrame.(*frameImpl), err)
+	}
+	return p.Locator(selector)
 }
 
 func (p *pageImpl) FrameLocator(selector string) FrameLocator {
@@ -1352,7 +1568,7 @@ func (p *pageImpl) RequestGC() error {
 	return err
 }
 
-func (p *pageImpl) RouteWebSocket(url interface{}, handler func(WebSocketRoute)) error {
+func (p *pageImpl) RouteWebSocket(url any, handler func(WebSocketRoute)) error {
 	p.Lock()
 	defer p.Unlock()
 	p.webSocketRoutes = slices.Insert(p.webSocketRoutes, 0, newWebSocketRouteHandler(newURLMatcher(url, p.browserContext.options.BaseURL, true), handler))
@@ -1377,8 +1593,50 @@ func (p *pageImpl) onWebSocketRoute(wr WebSocketRoute) {
 
 func (p *pageImpl) updateWebSocketInterceptionPatterns() error {
 	patterns := prepareWebSocketRouteHandlerInterceptionPatterns(p.webSocketRoutes)
-	_, err := p.channel.Send("setWebSocketInterceptionPatterns", map[string]interface{}{
+	_, err := p.channel.Send("setWebSocketInterceptionPatterns", map[string]any{
 		"patterns": patterns,
 	})
 	return err
+}
+
+func (p *pageImpl) AriaSnapshot(options ...PageAriaSnapshotOptions) (string, error) {
+	var ariaTimeout *float64
+	if len(options) == 1 {
+		ariaTimeout = options[0].Timeout
+	}
+	result, err := p.mainFrame.(*frameImpl).channel.SendWithTimeout("ariaSnapshot", resolveTimeout(p.timeoutSettings, ariaTimeout), options)
+	if err != nil {
+		return "", err
+	}
+	return result.(string), nil
+}
+
+func (p *pageImpl) ClearConsoleMessages() error {
+	_, err := p.channel.Send("clearConsoleMessages")
+	return err
+}
+
+func (p *pageImpl) ClearPageErrors() error {
+	_, err := p.channel.Send("clearPageErrors")
+	return err
+}
+
+func (p *pageImpl) PageErrors() ([]string, error) {
+	result, err := p.channel.Send("pageErrors")
+	if err != nil {
+		return nil, err
+	}
+	items := result.([]any)
+	errors := make([]string, len(items))
+	for i, item := range items {
+		se := item.(map[string]any)
+		if errObj, ok := se["error"].(map[string]any); ok {
+			errors[i] = errObj["message"].(string)
+		}
+	}
+	return errors, nil
+}
+
+func (p *pageImpl) Screencast() (Screencast, error) {
+	return &screencastImpl{page: p}, nil
 }

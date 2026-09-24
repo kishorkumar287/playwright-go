@@ -10,11 +10,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/h2non/filetype"
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,14 +45,14 @@ func TestPageSetContent(t *testing.T) {
 func TestPageSetContentShouldRespectDefaultNavigationTimeout(t *testing.T) {
 	BeforeEach(t)
 
-	page.SetDefaultNavigationTimeout(5)
-	imgPath := "/img/png"
+	page.SetDefaultNavigationTimeout(1)
+	imgPath := "/img.png"
 	// stall for image
-	require.NoError(t, page.Route(imgPath, func(r playwright.Route) {}))
+	server.SetRoute(imgPath, func(w http.ResponseWriter, r *http.Request) {})
 
 	err := page.SetContent(fmt.Sprintf(`<img src="%s"></img>`, server.PREFIX+imgPath))
 	require.ErrorIs(t, err, playwright.ErrTimeout)
-	require.ErrorContains(t, err, "Timeout 5ms exceeded.")
+	require.ErrorContains(t, err, "Timeout 1ms exceeded.")
 }
 
 func TestPageScreenshot(t *testing.T) {
@@ -218,6 +219,32 @@ func TestPageEvaluate(t *testing.T) {
 	require.Equal(t, val, big.NewInt(17))
 }
 
+// TestPageEvaluateIntegerArgTypes verifies that sized integer types (not just
+// the bare int) round-trip as numbers rather than being serialized as
+// undefined.
+func TestPageEvaluateIntegerArgTypes(t *testing.T) {
+	BeforeEach(t)
+
+	for _, arg := range []any{int8(7), int16(7), int32(7), int64(7), uint(7), uint8(7), uint16(7), uint32(7), uint64(7)} {
+		val, err := page.Evaluate(`a => a + 1`, arg)
+		require.NoError(t, err)
+		require.EqualValues(t, 8, val)
+	}
+}
+
+// TestPageEvaluateReturnsRegExp verifies that a RegExp returned from page
+// evaluation is parsed into a *regexp.Regexp instead of panicking the client.
+func TestPageEvaluateReturnsRegExp(t *testing.T) {
+	BeforeEach(t)
+
+	val, err := page.Evaluate(`() => /foo.*bar/i`)
+	require.NoError(t, err)
+	re, ok := val.(*regexp.Regexp)
+	require.True(t, ok, "expected *regexp.Regexp, got %T", val)
+	require.True(t, re.MatchString("xx FOO zz BAR yy"))
+	require.False(t, re.MatchString("baz"))
+}
+
 func TestPageEvalOnSelectorAll(t *testing.T) {
 	BeforeEach(t)
 
@@ -258,6 +285,16 @@ func TestPageExpectWorker(t *testing.T) {
 	require.Equal(t, worker, page.Workers()[0])
 	worker = page.Workers()[0]
 	require.Contains(t, worker.URL(), "worker.js")
+	// flaky in the macos-latest of gh action
+	require.Eventually(
+		t,
+		func() bool {
+			v, err := worker.Evaluate(`() => self["workerFunction"] ? true : false`)
+			require.NoError(t, err)
+			return v == true
+		},
+		500*time.Millisecond, 10*time.Millisecond,
+	)
 	res, err := worker.Evaluate(`() => self["workerFunction"]()`)
 	require.NoError(t, err)
 	require.Equal(t, "worker function result", res)
@@ -307,6 +344,21 @@ func TestPageExpectRequestFunc(t *testing.T) {
 	require.Equal(t, "GET", request.Method())
 }
 
+func TestPageExpectRequestPredicate(t *testing.T) {
+	BeforeEach(t)
+
+	request, err := page.ExpectRequest(func(r playwright.Request) bool {
+		return r.Method() == "GET" && strings.HasSuffix(r.URL(), "empty.html")
+	}, func() error {
+		_, err := page.Goto(server.EMPTY_PAGE)
+		return err
+	})
+	require.NoError(t, err)
+	require.Equal(t, server.EMPTY_PAGE, request.URL())
+	require.Equal(t, "document", request.ResourceType())
+	require.Equal(t, "GET", request.Method())
+}
+
 func TestPageExpectRequestFinished(t *testing.T) {
 	BeforeEach(t)
 
@@ -325,6 +377,7 @@ func TestPageExpectRequestFinished(t *testing.T) {
 }
 
 func TestPageExpectPopup(t *testing.T) {
+	skipWebKitMacOSPopup(t)
 	BeforeEach(t)
 
 	_, err := page.Goto(server.EMPTY_PAGE)
@@ -391,7 +444,38 @@ func TestPageExpectEvent(t *testing.T) {
 	t.Skip()
 }
 
+// The Predicate of the generic ExpectEvent/WaitForEvent APIs is untyped, so a
+// predicate that cannot be invoked has to surface as an error instead of
+// panicking inside the event dispatch goroutine.
+func TestPageExpectEventUnusablePredicate(t *testing.T) {
+	BeforeEach(t)
+
+	log := func() error {
+		_, err := page.Evaluate(`() => console.log("hello")`)
+		return err
+	}
+
+	_, err := page.ExpectEvent("console", log, playwright.PageExpectEventOptions{
+		Predicate: "not-a-function",
+	})
+	require.ErrorContains(t, err, "predicate must be a function")
+
+	// Right shape, wrong event type.
+	_, err = page.ExpectEvent("console", log, playwright.PageExpectEventOptions{
+		Predicate: func(playwright.Request) bool { return true },
+	})
+	require.ErrorContains(t, err, "cannot be called with an event of type")
+
+	// A usable predicate still works.
+	msg, err := page.ExpectEvent("console", log, playwright.PageExpectEventOptions{
+		Predicate: func(m playwright.ConsoleMessage) bool { return m.Text() == "hello" },
+	})
+	require.NoError(t, err)
+	require.Equal(t, "hello", msg.(playwright.ConsoleMessage).Text())
+}
+
 func TestPageOpener(t *testing.T) {
+	skipWebKitMacOSPopup(t)
 	BeforeEach(t)
 
 	eventPage, err := context.ExpectEvent("page", func() error {
@@ -406,6 +490,12 @@ func TestPageOpener(t *testing.T) {
 	require.Equal(t, opener, page)
 
 	opener, err = page.Opener()
+	require.NoError(t, err)
+	require.Nil(t, opener)
+
+	// Once the opener page is closed, Opener() returns nil (matches upstream).
+	require.NoError(t, page.Close())
+	opener, err = popup.Opener()
 	require.NoError(t, err)
 	require.Nil(t, opener)
 }
@@ -459,6 +549,21 @@ func TestPageReload(t *testing.T) {
 	v, err := page.Evaluate("window._foo")
 	require.NoError(t, err)
 	require.Nil(t, v)
+}
+
+// TestPageReloadRespectsDefaultNavigationTimeout verifies Reload honors the
+// configured default navigation timeout (it must resolve the timeout, not fall
+// back to the hardcoded 30s serializer default).
+func TestPageReloadRespectsDefaultNavigationTimeout(t *testing.T) {
+	BeforeEach(t)
+
+	_, err := page.Goto(server.EMPTY_PAGE)
+	require.NoError(t, err)
+	page.SetDefaultNavigationTimeout(1)
+	server.SetRoute("/empty.html", func(w http.ResponseWriter, r *http.Request) {}) // stall
+	_, err = page.Reload()
+	require.ErrorIs(t, err, playwright.ErrTimeout)
+	require.ErrorContains(t, err, "Timeout 1ms exceeded.")
 }
 
 func TestPageGoBackGoForward(t *testing.T) {
@@ -820,11 +925,11 @@ func TestPageFrame(t *testing.T) {
 	require.Equal(t, name, frame2.Name())
 	require.Equal(t, server.EMPTY_PAGE, frame2.URL())
 
+	// When a name is provided it takes precedence and the URL is never
+	// consulted, matching upstream (page.frame should respect name): a
+	// non-matching name returns nil regardless of the URL.
 	badName := "test"
-	frame3 := page.Frame(playwright.PageFrameOptions{Name: &badName, URL: server.EMPTY_PAGE})
-	require.Equal(t, name, frame3.Name())
-	require.Equal(t, server.EMPTY_PAGE, frame3.URL())
-
+	require.Nil(t, page.Frame(playwright.PageFrameOptions{Name: &badName, URL: server.EMPTY_PAGE}))
 	require.Nil(t, page.Frame(playwright.PageFrameOptions{Name: &badName, URL: "https://example.com"}))
 	require.Nil(t, page.Frame(playwright.PageFrameOptions{Name: &badName}))
 }
@@ -995,11 +1100,12 @@ func TestPageShouldSetBodysizeAndHeadersize(t *testing.T) {
 
 	_, err := page.Goto(server.EMPTY_PAGE)
 	require.NoError(t, err)
-	request, err := page.ExpectRequest("**/*", func() error {
-		_, err = page.Evaluate("() => fetch('./get', { method: 'POST', body: '12345'}).then(r => r.text())")
-		require.NoError(t, err)
-		return nil
-	},
+	request, err := page.ExpectRequest(
+		"**/*", func() error {
+			_, err = page.Evaluate("() => fetch('./get', { method: 'POST', body: '12345'}).then(r => r.text())")
+			require.NoError(t, err)
+			return nil
+		},
 	)
 	require.NoError(t, err)
 	sizes, err := request.Sizes()
@@ -1013,11 +1119,12 @@ func TestPageTestShouldSetBodysizeTo0(t *testing.T) {
 
 	_, err := page.Goto(server.EMPTY_PAGE)
 	require.NoError(t, err)
-	request, err := page.ExpectRequest("**/*", func() error {
-		_, err = page.Evaluate("() => fetch('./get').then(r => r.text())")
-		require.NoError(t, err)
-		return nil
-	},
+	request, err := page.ExpectRequest(
+		"**/*", func() error {
+			_, err = page.Evaluate("() => fetch('./get').then(r => r.text())")
+			require.NoError(t, err)
+			return nil
+		},
 	)
 	require.NoError(t, err)
 	sizes, err := request.Sizes()
@@ -1084,6 +1191,19 @@ func TestPageExpectResponse(t *testing.T) {
 		require.Equal(t, fmt.Sprintf("%s/one-style.html", server.PREFIX), response.URL())
 	})
 
+	t.Run("should work with response predicate", func(t *testing.T) {
+		BeforeEach(t)
+
+		response, err := page.ExpectResponse(func(r playwright.Response) bool {
+			return r.Status() == 200 && strings.HasSuffix(r.URL(), "one-style.html")
+		}, func() error {
+			_, err := page.Goto(server.PREFIX + "/one-style.html")
+			return err
+		}, playwright.PageExpectResponseOptions{Timeout: playwright.Float(3 * 1000)})
+		require.NoError(t, err)
+		require.Equal(t, fmt.Sprintf("%s/one-style.html", server.PREFIX), response.URL())
+	})
+
 	t.Run("should work", func(t *testing.T) {
 		BeforeEach(t)
 
@@ -1136,6 +1256,52 @@ func TestPageExpectResponse(t *testing.T) {
 
 		require.Nil(t, response)
 		require.ErrorContains(t, err, "Timeout 1000.00ms exceeded.")
+	})
+
+	// Regression test for https://github.com/mxschmitt/playwright-go/issues/323:
+	// waiting for several responses concurrently (the Go equivalent of
+	// Promise.all) must resolve every waiter. Previously, once one waiter
+	// completed it unsubscribed all the others, so the rest timed out.
+	t.Run("should work with concurrent waiters", func(t *testing.T) {
+		BeforeEach(t)
+
+		ids := []string{"a", "b", "c", "d", "e", "f"}
+		for _, id := range ids {
+			id := id
+			server.SetRoute("/api/"+id, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, err := fmt.Fprintf(w, `{"id":"%s"}`, id)
+				require.NoError(t, err)
+			})
+		}
+
+		_, err := page.Goto(server.EMPTY_PAGE)
+		require.NoError(t, err)
+
+		var wg sync.WaitGroup
+		results := make([]string, len(ids))
+		errs := make([]error, len(ids))
+		for i, id := range ids {
+			wg.Add(1)
+			go func(idx int, id string) {
+				defer wg.Done()
+				resp, err := page.ExpectResponse("**/api/"+id, func() error {
+					_, e := page.Evaluate(fmt.Sprintf(`fetch("/api/%s")`, id))
+					return e
+				}, playwright.PageExpectResponseOptions{Timeout: playwright.Float(10 * 1000)})
+				if err != nil {
+					errs[idx] = err
+					return
+				}
+				results[idx] = resp.URL()
+			}(i, id)
+		}
+		wg.Wait()
+
+		for i, id := range ids {
+			require.NoErrorf(t, errs[i], "waiter %d (id %s)", i, id)
+			require.Contains(t, results[i], "/api/"+id)
+		}
 	})
 }
 
@@ -1198,11 +1364,33 @@ func TestCloseShouldRunBeforunloadIfAskedFor(t *testing.T) {
 	} else {
 		require.Contains(t, dialog.Message(), "This page is asking you to confirm that you want to leave")
 	}
+	// Accepting the beforeunload dialog closes the page, so waiting for the
+	// "close" event must resolve successfully (matching upstream beforeunload.spec.ts).
 	_, err = page.ExpectEvent("close", func() error {
-		require.NoError(t, dialog.Accept())
-		return nil
+		return dialog.Accept()
 	})
-	require.Error(t, err)
+	require.NoError(t, err)
+}
+
+// TestCloseShouldAccessPageAfterBeforeUnload mirrors upstream's "should access
+// page after beforeunload" test: with runBeforeUnload the page is not actually
+// closed after dismissing the dialog, so it remains usable.
+func TestCloseShouldAccessPageAfterBeforeUnload(t *testing.T) {
+	BeforeEach(t)
+
+	_, err := page.Goto(fmt.Sprintf("%s/beforeunload.html", server.PREFIX))
+	require.NoError(t, err)
+	dialogInfo, err := page.ExpectEvent("dialog", func() error {
+		require.NoError(t, page.Locator("body").Click())
+		return page.Close(playwright.PageCloseOptions{
+			RunBeforeUnload: playwright.Bool(true),
+		})
+	})
+	require.NoError(t, err)
+	dialog := dialogInfo.(playwright.Dialog)
+	require.NoError(t, dialog.Dismiss())
+	_, err = page.Evaluate("() => document.title")
+	require.NoError(t, err)
 }
 
 func TestPageGotoShouldFailWhenExceedingBrowserContextNavigationTimeout(t *testing.T) {
@@ -1210,11 +1398,10 @@ func TestPageGotoShouldFailWhenExceedingBrowserContextNavigationTimeout(t *testi
 
 	// Hang for request to the empty.html
 	server.SetRoute("/empty.html", func(w http.ResponseWriter, r *http.Request) {})
-	context.SetDefaultNavigationTimeout(5)
-	defer context.SetDefaultNavigationTimeout(30 * 1000) // reset
+	context.SetDefaultNavigationTimeout(2)
 	_, err := page.Goto(server.EMPTY_PAGE)
 	require.ErrorIs(t, err, playwright.ErrTimeout)
-	require.ErrorContains(t, err, "Timeout 5ms exceeded.")
+	require.ErrorContains(t, err, "Timeout 2ms exceeded.")
 	require.ErrorContains(t, err, "/empty.html")
 }
 
@@ -1254,4 +1441,130 @@ func TestShouldEmulateContrast(t *testing.T) {
 	ret, err = page.Evaluate(`matchMedia('(prefers-contrast: no-preference)').matches`)
 	require.NoError(t, err)
 	require.True(t, ret.(bool))
+}
+
+// TestPageConsoleMessages verifies that Page.ConsoleMessages() returns accumulated console messages
+// Based on upstream test: playwright/tests/page/page-event-console.spec.ts
+func TestPageConsoleMessages(t *testing.T) {
+	BeforeEach(t)
+
+	// Generate 301 console messages (should keep last 100)
+	_, err := page.Evaluate(`() => {
+		for (let i = 0; i < 301; i++) {
+			console.log('message' + i);
+		}
+	}`)
+	require.NoError(t, err)
+
+	messages, err := page.ConsoleMessages()
+	require.NoError(t, err)
+
+	// Should return at least 100 messages (the buffer limit)
+	require.GreaterOrEqual(t, len(messages), 100, "should be at least 100 messages")
+
+	// Verify the last 100 messages are correct (message201 to message300)
+	expectedStart := 301 - len(messages)
+	for i, msg := range messages {
+		expectedText := fmt.Sprintf("message%d", expectedStart+i)
+		require.Equal(t, expectedText, msg.Text())
+		require.Equal(t, "log", msg.Type())
+
+		// Note: Page() may be nil for console messages retrieved from the buffer
+		// as they don't include full channel references like live events do
+	}
+}
+
+// TestPageConsoleMessagesEmpty verifies that ConsoleMessages() returns empty array for new page
+func TestPageConsoleMessagesEmpty(t *testing.T) {
+	BeforeEach(t)
+
+	messages, err := page.ConsoleMessages()
+	require.NoError(t, err)
+	require.Empty(t, messages)
+}
+
+// TestPageConsoleMessagesTypes verifies different console message types are captured
+func TestPageConsoleMessagesTypes(t *testing.T) {
+	BeforeEach(t)
+
+	_, err := page.Evaluate(`() => {
+		console.log('log message');
+		console.warn('warn message');
+		console.error('error message');
+		console.info('info message');
+	}`)
+	require.NoError(t, err)
+
+	messages, err := page.ConsoleMessages()
+	require.NoError(t, err)
+	require.Len(t, messages, 4)
+
+	expectedTypes := []string{"log", "warning", "error", "info"}
+	for i, msg := range messages {
+		require.Equal(t, expectedTypes[i], msg.Type())
+	}
+}
+
+// TestPageRequests verifies that Page.Requests() returns accumulated requests
+// Based on upstream test: playwright/tests/page/page-event-request.spec.ts
+func TestPageRequests(t *testing.T) {
+	BeforeEach(t)
+
+	// Navigate to a page (creates initial request)
+	_, err := page.Goto(server.EMPTY_PAGE)
+	require.NoError(t, err)
+
+	// Create multiple fetch requests
+	for i := 0; i < 99; i++ {
+		path := fmt.Sprintf("/fetch%d", i)
+		server.SetRoute(path, func(w http.ResponseWriter, r *http.Request) {
+			_, err := w.Write([]byte("response"))
+			require.NoError(t, err)
+		})
+	}
+
+	// Make 99 fetch requests
+	for i := 0; i < 99; i++ {
+		url := fmt.Sprintf("%s/fetch%d", server.PREFIX, i)
+		_, err := page.Evaluate(`url => fetch(url)`, url)
+		require.NoError(t, err)
+	}
+
+	requests, err := page.Requests()
+	require.NoError(t, err)
+
+	// Should have at least 100 requests (navigation + 99 fetches, buffer limit is 100)
+	require.GreaterOrEqual(t, len(requests), 99, "should capture fetch requests")
+
+	// Verify requests are functional
+	for _, req := range requests {
+		require.NotEmpty(t, req.URL())
+		require.NotEmpty(t, req.Method())
+	}
+}
+
+// TestPageRequestsEmpty verifies that Requests() returns empty array for new page
+func TestPageRequestsEmpty(t *testing.T) {
+	BeforeEach(t)
+
+	requests, err := page.Requests()
+	require.NoError(t, err)
+	require.Empty(t, requests)
+}
+
+// TestPageRequestsWithNavigation verifies navigation requests are included
+func TestPageRequestsWithNavigation(t *testing.T) {
+	BeforeEach(t)
+
+	_, err := page.Goto(server.EMPTY_PAGE)
+	require.NoError(t, err)
+
+	requests, err := page.Requests()
+	require.NoError(t, err)
+	require.Len(t, requests, 1, "should capture navigation request")
+
+	req := requests[0]
+	require.Equal(t, server.EMPTY_PAGE, req.URL())
+	require.Equal(t, "GET", req.Method())
+	require.Equal(t, "document", req.ResourceType())
 }

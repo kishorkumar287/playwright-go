@@ -26,7 +26,7 @@ func Float(v float64) *float64 {
 
 // Null will be used in certain scenarios where a strict nil pointer
 // check is not possible
-func Null() interface{} {
+func Null() any {
 	return "PW_NULL"
 }
 
@@ -53,8 +53,9 @@ func (s StorageState) ToOptionalStorageState() *OptionalStorageState {
 		cookies[i] = c.ToOptionalCookie()
 	}
 	return &OptionalStorageState{
-		Origins: s.Origins,
-		Cookies: cookies,
+		Origins:     s.Origins,
+		Cookies:     cookies,
+		Credentials: s.Credentials,
 	}
 }
 
@@ -68,5 +69,17 @@ func (c Cookie) ToOptionalCookie() OptionalCookie {
 		HttpOnly: Bool(c.HttpOnly),
 		Secure:   Bool(c.Secure),
 		SameSite: c.SameSite,
+	}
+}
+
+// assignFloatIfPresent overrides *target with m[key] when that key holds a
+// float64 value, leaving *target untouched otherwise. It is used to merge the
+// timing fields returned by the server over their pre-seeded defaults without
+// panicking when a field is missing or has an unexpected type.
+func assignFloatIfPresent(m map[string]any, key string, target *float64) {
+	if val, ok := m[key]; ok {
+		if f, isFloat := val.(float64); isFloat {
+			*target = f
+		}
 	}
 }

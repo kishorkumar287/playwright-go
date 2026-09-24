@@ -3,11 +3,12 @@ package playwright_test
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/h2non/filetype"
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +17,7 @@ func TestVideoShouldWork(t *testing.T) {
 	recordVideoDir := t.TempDir()
 	BeforeEach(t, playwright.BrowserNewContextOptions{
 		RecordVideo: &playwright.RecordVideo{
-			Dir: recordVideoDir,
+			Dir: playwright.String(recordVideoDir),
 			Size: &playwright.Size{
 				Width:  500,
 				Height: 400,
@@ -57,7 +58,7 @@ func TestVideo(t *testing.T) {
 		recordVideoDir := t.TempDir()
 		BeforeEach(t, playwright.BrowserNewContextOptions{
 			RecordVideo: &playwright.RecordVideo{
-				Dir: recordVideoDir,
+				Dir: playwright.String(recordVideoDir),
 				Size: &playwright.Size{
 					Width:  500,
 					Height: 400,
@@ -81,7 +82,7 @@ func TestVideo(t *testing.T) {
 		recordVideoDir := t.TempDir()
 		BeforeEach(t, playwright.BrowserNewContextOptions{
 			RecordVideo: &playwright.RecordVideo{
-				Dir: recordVideoDir,
+				Dir: playwright.String(recordVideoDir),
 				Size: &playwright.Size{
 					Width:  500,
 					Height: 400,
@@ -108,7 +109,7 @@ func TestVideo(t *testing.T) {
 		recordVideoDir := t.TempDir()
 		BeforeEach(t, playwright.BrowserNewContextOptions{
 			RecordVideo: &playwright.RecordVideo{
-				Dir: recordVideoDir,
+				Dir: playwright.String(recordVideoDir),
 				Size: &playwright.Size{
 					Width:  500,
 					Height: 400,
@@ -158,7 +159,7 @@ func TestVideo(t *testing.T) {
 		context, err := bt.LaunchPersistentContext(tmpDir, playwright.BrowserTypeLaunchPersistentContextOptions{
 			Headless: playwright.Bool(os.Getenv("HEADFUL") == ""),
 			RecordVideo: &playwright.RecordVideo{
-				Dir: tmpDir,
+				Dir: playwright.String(tmpDir),
 			},
 		})
 		require.NoError(t, err)
@@ -189,11 +190,11 @@ func TestVideo(t *testing.T) {
 		browser1, err := browserType.Connect(remoteServer.url)
 		require.NoError(t, err)
 		require.NotNil(t, browser1)
-		defer browser1.Close()
+		defer browser1.Close() //nolint:errcheck
 
 		browser_context, err := browser1.NewContext(playwright.BrowserNewContextOptions{
 			RecordVideo: &playwright.RecordVideo{
-				Dir: tmpDir,
+				Dir: playwright.String(tmpDir),
 			},
 		})
 		require.NoError(t, err)
@@ -212,4 +213,127 @@ func TestVideo(t *testing.T) {
 		require.NoError(t, video.SaveAs(tmpFile))
 		require.FileExists(t, tmpFile)
 	})
+}
+
+func TestVideoRelativeDirShouldResolveToAbsolute(t *testing.T) {
+	// Regression test for https://github.com/mxschmitt/playwright-go/issues/565
+	// A relative recordVideo.dir must be resolved to an absolute path client-side
+	// (matching upstream path.resolve), so Video().Path() does not depend on the
+	// process working directory at the time it is read.
+	//
+	// Run from inside a temp dir so the relative path is valid on Windows too,
+	// where t.TempDir() and the repo may live on different drives (and thus have
+	// no relative path between them).
+	tmpDir := t.TempDir()
+	origWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(tmpDir))
+	defer func() { require.NoError(t, os.Chdir(origWd)) }()
+
+	const relDir = "videos"
+	// t.TempDir() may resolve through a symlink (e.g. /var -> /private/var on
+	// macOS); resolve the expected absolute dir the same way the client does.
+	expectedDir, err := filepath.Abs(relDir)
+	require.NoError(t, err)
+
+	BeforeEach(t, playwright.BrowserNewContextOptions{
+		RecordVideo: &playwright.RecordVideo{
+			Dir: playwright.String(relDir),
+		},
+	})
+
+	_, err = page.Goto(server.PREFIX + "/grid.html")
+	require.NoError(t, err)
+	//nolint:staticcheck
+	page.WaitForTimeout(500)
+	require.NoError(t, context.Close())
+
+	path, err := page.Video().Path()
+	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(path), "Video().Path() should be absolute, got %q", path)
+	require.Equal(t, expectedDir, filepath.Dir(path))
+	require.FileExists(t, path)
+}
+
+func TestScreencastStartStop(t *testing.T) {
+	BeforeEach(t)
+
+	_, err := page.Goto(server.PREFIX + "/grid.html")
+	require.NoError(t, err)
+
+	screencast, err := page.Screencast()
+	require.NoError(t, err)
+
+	var (
+		mu         sync.Mutex
+		frames     [][]byte
+		firstFrame = make(chan struct{}, 1)
+	)
+	err = screencast.Start(playwright.ScreencastStartOptions{
+		OnFrame: func(frame playwright.OnFrame) {
+			mu.Lock()
+			frames = append(frames, frame.Data)
+			mu.Unlock()
+			select {
+			case firstFrame <- struct{}{}:
+			default:
+			}
+		},
+	})
+	require.NoError(t, err)
+
+	// Trigger some activity to generate frames, then wait until at least one
+	// frame arrives rather than racing a fixed timeout (webkit can be slow).
+	_, err = page.Reload()
+	require.NoError(t, err)
+	select {
+	case <-firstFrame:
+	case <-time.After(30 * time.Second):
+		t.Fatal("should have received at least one frame")
+	}
+
+	err = screencast.Stop()
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Greater(t, len(frames), 0, "should have received at least one frame")
+	require.Greater(t, len(frames[0]), 0, "frame data should not be empty")
+}
+
+func TestVideoShowActionsCursorAccepted(t *testing.T) {
+	BeforeEach(t)
+	dir := t.TempDir()
+	ctx, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		RecordVideo: &playwright.RecordVideo{
+			Dir: playwright.String(dir),
+			ShowActions: &playwright.ShowAction{
+				Cursor: playwright.ScreencastCursorPointer,
+			},
+		},
+	})
+	require.NoError(t, err)
+	defer ctx.Close() //nolint:errcheck
+	p, err := ctx.NewPage()
+	require.NoError(t, err)
+	_, err = p.Goto(server.EMPTY_PAGE)
+	require.NoError(t, err)
+	// Options are accepted if context creation and a simple navigation succeed.
+	require.NoError(t, ctx.Close())
+
+	ctx2, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		RecordVideo: &playwright.RecordVideo{
+			Dir: playwright.String(dir),
+			ShowActions: &playwright.ShowAction{
+				Cursor: playwright.ScreencastCursorNone,
+			},
+		},
+	})
+	require.NoError(t, err)
+	defer ctx2.Close() //nolint:errcheck
+	p2, err := ctx2.NewPage()
+	require.NoError(t, err)
+	_, err = p2.Goto(server.EMPTY_PAGE)
+	require.NoError(t, err)
+	require.NoError(t, ctx2.Close())
 }

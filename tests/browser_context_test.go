@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -106,7 +106,7 @@ func TestBrowserContextSetHttpCredentials(t *testing.T) {
 	response, err := page.Goto(server.EMPTY_PAGE)
 	require.NoError(t, err)
 	require.Equal(t, 401, response.Status())
-	context.Close()
+	context.Close() //nolint:errcheck
 
 	context, page = newBrowserContextAndPage(t, playwright.BrowserNewContextOptions{
 		AcceptDownloads: playwright.Bool(true),
@@ -179,15 +179,15 @@ func TestBrowserContextAddCookies(t *testing.T) {
 
 	require.Equal(t, []playwright.Cookie{
 		{
-			Name:    "password",
-			Value:   "123456",
-			Domain:  "127.0.0.1",
-			Path:    "/",
-			Expires: -1,
-
-			HttpOnly: false,
-			Secure:   false,
-			SameSite: sameSite,
+			Name:         "password",
+			Value:        "123456",
+			Domain:       "127.0.0.1",
+			Path:         "/",
+			Expires:      -1,
+			HttpOnly:     false,
+			Secure:       false,
+			SameSite:     sameSite,
+			PartitionKey: nil,
 		},
 	}, cookies)
 
@@ -226,6 +226,7 @@ func TestBrowserContextAddInitScriptWithPath(t *testing.T) {
 }
 
 func TestBrowserContextWindowOpenshouldUseParentTabContext(t *testing.T) {
+	skipWebKitMacOSPopup(t)
 	BeforeEach(t)
 
 	_, err := page.Goto(server.EMPTY_PAGE)
@@ -281,61 +282,12 @@ func TestBrowserContextUnrouteShouldWork(t *testing.T) {
 }
 
 func TestBrowserContextShouldReturnBackgroundPage(t *testing.T) {
-	BeforeEach(t)
-
-	if !isChromium {
-		t.Skip()
-	}
-	if runtime.GOOS == "windows" {
-		t.Skip("flaky on windows")
-	}
-	extensionPath := Asset("simple-extension")
-	context, err := browserType.LaunchPersistentContext(
-		t.TempDir(),
-		playwright.BrowserTypeLaunchPersistentContextOptions{
-			Headless: playwright.Bool(false),
-			Args: []string{
-				fmt.Sprintf("--disable-extensions-except=%s", extensionPath),
-				fmt.Sprintf("--load-extension=%s", extensionPath),
-			},
-		},
-	)
-	require.NoError(t, err)
-	var page playwright.Page
-	if len(context.BackgroundPages()) == 1 {
-		page = context.BackgroundPages()[0]
-	} else {
-		ret, err := context.WaitForEvent("backgroundPage", playwright.BrowserContextWaitForEventOptions{
-			Timeout: playwright.Float(1000),
-		})
-		if err != nil {
-			// probably missing event
-			if len(context.BackgroundPages()) == 1 {
-				page = context.BackgroundPages()[0]
-			} else {
-				t.Fatal(err)
-			}
-		} else {
-			page = ret.(playwright.Page)
-		}
-	}
-	require.NotNil(t, page)
-	contains := func(pages []playwright.Page, page playwright.Page) bool {
-		for _, p := range pages {
-			if p == page {
-				return true
-			}
-		}
-		return false
-	}
-	require.False(t, contains(context.Pages(), page))
-	require.True(t, contains(context.BackgroundPages(), page))
-	context.Close()
-	require.Len(t, context.BackgroundPages(), 0)
-	require.Len(t, context.Pages(), 0)
+	// Background pages have been removed from Chromium together with Manifest V2 extensions
+	t.Skip("Background pages are deprecated - Manifest V2 extensions no longer supported in Chromium")
 }
 
 func TestPageEventShouldHaveURL(t *testing.T) {
+	skipWebKitMacOSPopup(t)
 	BeforeEach(t)
 
 	context.OnPage(func(p playwright.Page) {
@@ -365,6 +317,7 @@ func TestConsoleEventShouldWork(t *testing.T) {
 }
 
 func TestBrowserContextEventsRequest(t *testing.T) {
+	skipWebKitMacOSPopup(t)
 	BeforeEach(t)
 
 	var requests []playwright.Request
@@ -388,6 +341,7 @@ func TestBrowserContextEventsRequest(t *testing.T) {
 }
 
 func TestBrowserContextEventsResponse(t *testing.T) {
+	skipWebKitMacOSPopup(t)
 	BeforeEach(t)
 
 	var responses []playwright.Response
@@ -418,7 +372,7 @@ func TestBrowserContextEventsRequestFailed(t *testing.T) {
 		if ok {
 			conn, _, err := hw.Hijack()
 			if err == nil {
-				conn.Close()
+				conn.Close() //nolint:errcheck
 			}
 		}
 	})
@@ -458,7 +412,7 @@ func TestBrowserContextShouldFireCloseEvent(t *testing.T) {
 
 	browser1, err := browserType.Launch()
 	require.NoError(t, err)
-	defer browser1.Close()
+	defer browser1.Close() //nolint:errcheck
 	context1, err := browser1.NewContext()
 	require.NoError(t, err)
 	closed := false
@@ -470,6 +424,7 @@ func TestBrowserContextShouldFireCloseEvent(t *testing.T) {
 }
 
 func TestDialogEventShouldWorkInImmdiatelyClosedPopup(t *testing.T) {
+	skipWebKitMacOSPopup(t)
 	BeforeEach(t)
 
 	if isFirefox {
@@ -526,6 +481,117 @@ func TestPageErrorEventShouldWork(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, page, weberror.Page())
 	require.ErrorContains(t, weberror.Error(), "boom")
+	require.NotNil(t, weberror.Location())
+}
+
+// Ported from upstream tests/library/browsercontext-events.spec.ts
+// "pageload event should work". These context-level events are forwarded from
+// the owning page (see page.go/frame.go), not emitted on the context channel.
+func TestBrowserContextEventsPageLoad(t *testing.T) {
+	BeforeEach(t)
+
+	ret, err := context.ExpectEvent("pageload", func() error {
+		_, err := page.Goto(server.EMPTY_PAGE)
+		return err
+	})
+	require.NoError(t, err)
+	eventPage, ok := ret.(playwright.Page)
+	require.True(t, ok)
+	require.Equal(t, page, eventPage)
+}
+
+// Ported from upstream "framenavigated event should work".
+func TestBrowserContextEventsFrameNavigated(t *testing.T) {
+	BeforeEach(t)
+
+	ret, err := context.ExpectEvent("framenavigated", func() error {
+		_, err := page.Goto(server.EMPTY_PAGE)
+		return err
+	})
+	require.NoError(t, err)
+	frame, ok := ret.(playwright.Frame)
+	require.True(t, ok)
+	require.Equal(t, page.MainFrame(), frame)
+	require.Equal(t, server.EMPTY_PAGE, frame.URL())
+}
+
+// Ported from upstream "pageclose event should work".
+func TestBrowserContextEventsPageClose(t *testing.T) {
+	BeforeEach(t)
+
+	newPage, err := context.NewPage()
+	require.NoError(t, err)
+	ret, err := context.ExpectEvent("pageclose", func() error {
+		return newPage.Close()
+	})
+	require.NoError(t, err)
+	closed, ok := ret.(playwright.Page)
+	require.True(t, ok)
+	require.Equal(t, newPage, closed)
+}
+
+// Ported from upstream "frameattached event should work".
+func TestBrowserContextEventsFrameAttached(t *testing.T) {
+	BeforeEach(t)
+
+	_, err := page.Goto(server.EMPTY_PAGE)
+	require.NoError(t, err)
+	ret, err := context.ExpectEvent("frameattached", func() error {
+		_, err := page.Evaluate(`() => {
+			const iframe = document.createElement('iframe');
+			iframe.src = 'about:blank';
+			document.body.appendChild(iframe);
+		}`)
+		return err
+	})
+	require.NoError(t, err)
+	frame, ok := ret.(playwright.Frame)
+	require.True(t, ok)
+	require.Equal(t, page.MainFrame(), frame.ParentFrame())
+}
+
+// Ported from upstream "framedetached event should work".
+func TestBrowserContextEventsFrameDetached(t *testing.T) {
+	BeforeEach(t)
+
+	_, err := page.Goto(server.EMPTY_PAGE)
+	require.NoError(t, err)
+	_, err = page.Evaluate(`() => {
+		const iframe = document.createElement('iframe');
+		iframe.id = 'x';
+		iframe.src = 'about:blank';
+		document.body.appendChild(iframe);
+	}`)
+	require.NoError(t, err)
+	require.NoError(t, page.Locator("iframe").WaitFor())
+	ret, err := context.ExpectEvent("framedetached", func() error {
+		_, err := page.Evaluate(`() => document.getElementById('x').remove()`)
+		return err
+	})
+	require.NoError(t, err)
+	frame, ok := ret.(playwright.Frame)
+	require.True(t, ok)
+	require.Equal(t, page.MainFrame(), frame.ParentFrame())
+}
+
+// Ported from upstream "download event should work".
+func TestBrowserContextEventsDownload(t *testing.T) {
+	BeforeEach(t)
+
+	server.SetRoute("/download", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", "attachment; filename=file.txt")
+		_, _ = w.Write([]byte("Hello world"))
+	})
+	require.NoError(t, page.SetContent(fmt.Sprintf(`<a href="%s/download">download</a>`, server.PREFIX)))
+	ret, err := context.ExpectEvent("download", func() error {
+		return page.Locator("a").Click()
+	})
+	require.NoError(t, err)
+	download, ok := ret.(playwright.Download)
+	require.True(t, ok)
+	require.Equal(t, "file.txt", download.SuggestedFilename())
+	require.Equal(t, page, download.Page())
 }
 
 func TestBrowserContextOnResponse(t *testing.T) {

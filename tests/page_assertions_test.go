@@ -3,8 +3,9 @@ package playwright_test
 import (
 	"regexp"
 	"testing"
+	"time"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,6 +62,9 @@ func TestPageAssertionsToHaveURLWithBaseURL(t *testing.T) {
 	require.NoError(t, expect.Page(page).ToHaveURL("/empty.html"))
 	require.NoError(t, expect.Page(page).ToHaveURL(regexp.MustCompile(`.*/empty\.html`)))
 	require.NoError(t, expect.Page(page).Not().ToHaveURL("https://playwright.dev"))
+	// An absolute URL must resolve to itself against the base URL (new URL
+	// semantics), not be mangled by naive path joining.
+	require.NoError(t, expect.Page(page).ToHaveURL(server.EMPTY_PAGE))
 	require.NoError(t, page.Close())
 }
 
@@ -87,4 +91,15 @@ func TestPageAssertionsToHaveAccessibleErrorMessage(t *testing.T) {
 		IgnoreCase: playwright.Bool(true),
 	}))
 	require.NoError(t, expect.Locator(locator).Not().ToHaveAccessibleErrorMessage("This should not be considered."))
+}
+
+func TestPageAssertionsUsesConfiguredTimeout(t *testing.T) {
+	BeforeEach(t)
+
+	require.NoError(t, page.SetContent(`<title>actual</title>`))
+	shortExpect := playwright.NewPlaywrightAssertions(150)
+	started := time.Now()
+	err := shortExpect.Page(page).ToHaveTitle("never")
+	require.Error(t, err)
+	require.Less(t, time.Since(started), 2*time.Second)
 }

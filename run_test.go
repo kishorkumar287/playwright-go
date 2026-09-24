@@ -7,14 +7,35 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
-	"github.com/mitchellh/go-ps"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+const (
+	testDriverHelperEnv  = "GO_WANT_PLAYWRIGHT_DRIVER_HELPER"
+	testDriverVersionEnv = "PLAYWRIGHT_GO_TEST_DRIVER_VERSION"
+)
+
+func TestMain(m *testing.M) {
+	if os.Getenv(testDriverHelperEnv) != "1" {
+		os.Exit(m.Run())
+	}
+	version := os.Getenv(testDriverVersionEnv)
+	validArgs := len(os.Args) >= 3 && filepath.Base(os.Args[len(os.Args)-2]) == "cli.js" && os.Args[len(os.Args)-1] == "--version"
+	if version == "" || !validArgs {
+		os.Exit(2)
+	}
+	fmt.Printf("Version %s\n", version)
+	os.Exit(0)
+}
 
 func TestRunOptionsRedirectStderr(t *testing.T) {
 	r, w := io.Pipe()
@@ -35,7 +56,7 @@ func TestRunOptionsRedirectStderr(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	t.Setenv("PLAYWRIGHT_DOWNLOAD_HOST", ts.URL)
+	t.Setenv("PLAYWRIGHT_GO_NPM_REGISTRY", ts.URL)
 	driver, err := NewDriver(options)
 	require.NoError(t, err)
 	err = driver.Install()
@@ -77,11 +98,16 @@ func TestRunOptions_OnlyInstallShell(t *testing.T) {
 	require.NoError(t, w.Close())
 	wg.Wait()
 
-	assert.Contains(t, output, "browser: chromium-headless-shell version")
-	assert.NotContains(t, output, "browser: chromium version")
+	assert.Contains(t, output, "chromium-headless-shell")
+	assert.NotContains(t, output, "Chrome for Testing")
 }
 
 func TestDriverInstall(t *testing.T) {
+	if _, err := nodePlatformSuffix(); err != nil {
+		t.Skipf("bundled Node.js is not available on this platform: %v", err)
+	}
+	t.Setenv("PLAYWRIGHT_NODEJS_PATH", "")
+	t.Setenv("PLAYWRIGHT_CLI_PATH", "")
 	driverPath := t.TempDir()
 	driver, err := NewDriver(&RunOptions{
 		DriverDirectory: driverPath,
@@ -92,22 +118,19 @@ func TestDriverInstall(t *testing.T) {
 		t.Fatalf("could not start driver: %v", err)
 	}
 	browserPath := t.TempDir()
-	err = os.Setenv("PLAYWRIGHT_BROWSERS_PATH", browserPath)
-	if err != nil {
-		t.Fatalf("could not set PLAYWRIGHT_BROWSERS_PATH: %v", err)
-	}
-	defer os.Unsetenv("PLAYWRIGHT_BROWSERS_PATH")
+	t.Setenv("PLAYWRIGHT_BROWSERS_PATH", browserPath)
 	err = driver.Install()
 	if err != nil {
 		t.Fatalf("could not install driver: %v", err)
 	}
+	requireDriverPackageArtifacts(t, driver, driverPath)
 	err = driver.Uninstall()
 	if err != nil {
 		t.Fatalf("could not uninstall driver: %v", err)
 	}
 }
 
-func TestDriverDownloadHostEnv(t *testing.T) {
+func TestNpmRegistryEnv(t *testing.T) {
 	driverPath := t.TempDir()
 	driver, err := NewDriver(&RunOptions{
 		DriverDirectory:     driverPath,
@@ -123,15 +146,187 @@ func TestDriverDownloadHostEnv(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	err = os.Setenv("PLAYWRIGHT_DOWNLOAD_HOST", ts.URL)
-	if err != nil {
-		t.Fatalf("could not set PLAYWRIGHT_DOWNLOAD_HOST: %v", err)
-	}
-	defer os.Unsetenv("PLAYWRIGHT_DOWNLOAD_HOST")
+	t.Setenv("PLAYWRIGHT_GO_NPM_REGISTRY", ts.URL)
 	err = driver.Install()
-	if err == nil || !strings.Contains(err.Error(), "404 Not Found") || !strings.Contains(uri, "/builds/driver") {
-		t.Fatalf("PLAYWRIGHT_DOWNLOAD_HOST do not work: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "404 Not Found") || !strings.Contains(uri, "playwright-core") {
+		t.Fatalf("PLAYWRIGHT_GO_NPM_REGISTRY does not work: %v", err)
 	}
+}
+
+func TestNodePlatformSuffix(t *testing.T) {
+	suffix, err := nodePlatformSuffix()
+	switch runtime.GOARCH {
+	case "amd64", "arm64":
+		require.NoError(t, err)
+		assert.NotEmpty(t, suffix)
+	default:
+		// e.g. linux/arm has no prebuilt Node.js binary on nodejs.org.
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "PLAYWRIGHT_NODEJS_PATH")
+	}
+}
+
+func TestPatchDriverBundleMakesPageErrorLocationOptional(t *testing.T) {
+	t.Setenv("PLAYWRIGHT_CLI_PATH", "")
+	driverPath := t.TempDir()
+	bundlePath := filepath.Join(driverPath, "package", "lib", "coreBundle.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(bundlePath), 0o755))
+	require.NoError(t, os.WriteFile(bundlePath, []byte(`location:{
+url:pageError.location.url,
+line: pageError.location.lineNumber,
+column:    pageError.location.columnNumber
+}`), 0o644))
+
+	driver, err := NewDriver(&RunOptions{DriverDirectory: driverPath})
+	require.NoError(t, err)
+	require.NoError(t, driver.patchDriverBundle())
+	require.NoError(t, driver.patchDriverBundle())
+
+	data, err := os.ReadFile(bundlePath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `pageError.location?.url || ""`)
+	require.Contains(t, string(data), `pageError.location?.lineNumber || 0`)
+	require.Contains(t, string(data), `pageError.location?.columnNumber || 0`)
+}
+
+func TestPatchDriverBundleAcceptsMixedOriginalAndPatchedPatterns(t *testing.T) {
+	t.Setenv("PLAYWRIGHT_CLI_PATH", "")
+	driverPath := t.TempDir()
+	bundlePath := filepath.Join(driverPath, "package", "lib", "coreBundle.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(bundlePath), 0o755))
+	require.NoError(t, os.WriteFile(bundlePath, []byte(`location:{
+	url:pageError.location?.url || "",
+	line: pageError.location.lineNumber,
+	column: pageError.location?.columnNumber || 0
+}`), 0o644))
+
+	driver, err := NewDriver(&RunOptions{DriverDirectory: driverPath})
+	require.NoError(t, err)
+	require.NoError(t, driver.patchDriverBundle())
+
+	data, err := os.ReadFile(bundlePath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `pageError.location?.url || ""`)
+	require.Contains(t, string(data), `pageError.location?.lineNumber || 0`)
+	require.Contains(t, string(data), `pageError.location?.columnNumber || 0`)
+}
+
+func TestPatchDriverBundleRequiresCoreBundle(t *testing.T) {
+	t.Setenv("PLAYWRIGHT_CLI_PATH", "")
+	driver, err := NewDriver(&RunOptions{DriverDirectory: t.TempDir()})
+	require.NoError(t, err)
+
+	err = driver.patchDriverBundle()
+	require.Error(t, err)
+	require.ErrorContains(t, err, "could not read driver bundle")
+}
+
+func TestPatchDriverBundleRejectsPartialPatternMismatch(t *testing.T) {
+	t.Setenv("PLAYWRIGHT_CLI_PATH", "")
+	driverPath := t.TempDir()
+	bundlePath := filepath.Join(driverPath, "package", "lib", "coreBundle.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(bundlePath), 0o755))
+	original := []byte(`location:{
+	url:pageError.location.url,
+	line: pageError.location.lineNumber
+}`)
+	require.NoError(t, os.WriteFile(bundlePath, original, 0o644))
+
+	driver, err := NewDriver(&RunOptions{DriverDirectory: driverPath})
+	require.NoError(t, err)
+	err = driver.patchDriverBundle()
+	require.Error(t, err)
+	require.ErrorContains(t, err, "pageError.location.columnNumber")
+
+	data, readErr := os.ReadFile(bundlePath)
+	require.NoError(t, readErr)
+	require.Equal(t, original, data, "an incompatible bundle must not be partially rewritten")
+}
+
+func TestDownloadDriverExternalCLIDoesNotRequireManagedBundle(t *testing.T) {
+	driverPath := filepath.Join(t.TempDir(), "driver-cache")
+	externalCLI := filepath.Join(t.TempDir(), "cli.js")
+	require.NoError(t, os.WriteFile(externalCLI, []byte("// externally managed"), 0o644))
+	configureTestDriverRuntime(t, playwrightCliVersion)
+	t.Setenv("PLAYWRIGHT_CLI_PATH", externalCLI)
+
+	var registryRequests atomic.Int32
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		registryRequests.Add(1)
+		http.Error(w, "unexpected download", http.StatusInternalServerError)
+	}))
+	defer registry.Close()
+	t.Setenv("PLAYWRIGHT_GO_NPM_REGISTRY", registry.URL)
+
+	driver, err := NewDriver(&RunOptions{DriverDirectory: driverPath})
+	require.NoError(t, err)
+	require.NoError(t, driver.DownloadDriver())
+	require.Zero(t, registryRequests.Load())
+	_, err = os.Stat(driverPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestDownloadDriverMissingExternalCLIFailsWithoutDownload(t *testing.T) {
+	missingCLI := filepath.Join(t.TempDir(), "missing-cli.js")
+	t.Setenv("PLAYWRIGHT_CLI_PATH", missingCLI)
+
+	var registryRequests atomic.Int32
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		registryRequests.Add(1)
+		http.Error(w, "unexpected download", http.StatusInternalServerError)
+	}))
+	defer registry.Close()
+	t.Setenv("PLAYWRIGHT_GO_NPM_REGISTRY", registry.URL)
+
+	driver, err := NewDriver(&RunOptions{DriverDirectory: t.TempDir()})
+	require.NoError(t, err)
+	err = driver.DownloadDriver()
+	require.EqualError(t, err, fmt.Sprintf("PLAYWRIGHT_CLI_PATH %q does not exist", missingCLI))
+	require.Zero(t, registryRequests.Load())
+}
+
+func TestDownloadDriverExternalCLIWrongVersionFailsWithoutDownload(t *testing.T) {
+	externalCLI := filepath.Join(t.TempDir(), "cli.js")
+	require.NoError(t, os.WriteFile(externalCLI, []byte("// externally managed"), 0o644))
+	configureTestDriverRuntime(t, "1.61.1")
+	t.Setenv("PLAYWRIGHT_CLI_PATH", externalCLI)
+
+	var registryRequests atomic.Int32
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		registryRequests.Add(1)
+		http.Error(w, "unexpected download", http.StatusInternalServerError)
+	}))
+	defer registry.Close()
+	t.Setenv("PLAYWRIGHT_GO_NPM_REGISTRY", registry.URL)
+
+	driver, err := NewDriver(&RunOptions{DriverDirectory: t.TempDir()})
+	require.NoError(t, err)
+	err = driver.DownloadDriver()
+	require.ErrorContains(t, err, "driver exists but version not "+playwrightCliVersion)
+	require.Zero(t, registryRequests.Load())
+}
+
+func TestDownloadDriverManagedCLIRequiresCoreBundle(t *testing.T) {
+	driverPath := t.TempDir()
+	cliPath := filepath.Join(driverPath, "package", "cli.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(cliPath), 0o755))
+	require.NoError(t, os.WriteFile(cliPath, []byte("// managed"), 0o644))
+	configureTestDriverRuntime(t, playwrightCliVersion)
+	t.Setenv("PLAYWRIGHT_CLI_PATH", "")
+
+	driver, err := NewDriver(&RunOptions{DriverDirectory: driverPath})
+	require.NoError(t, err)
+	err = driver.DownloadDriver()
+	require.ErrorContains(t, err, "could not read driver bundle")
+}
+
+func configureTestDriverRuntime(t *testing.T, version string) {
+	t.Helper()
+	testExecutable, err := os.Executable()
+	require.NoError(t, err)
+	t.Setenv("PLAYWRIGHT_NODEJS_PATH", testExecutable)
+	t.Setenv(testDriverHelperEnv, "1")
+	t.Setenv(testDriverVersionEnv, version)
 }
 
 func TestShouldNotHangWhenPlaywrightUnexpectedExit(t *testing.T) {
@@ -150,7 +345,12 @@ func TestShouldNotHangWhenPlaywrightUnexpectedExit(t *testing.T) {
 	context, err := browser.NewContext()
 	require.NoError(t, err)
 
-	err = killPlaywrightProcess()
+	// Get the process ID directly from Playwright
+	pid := pw.Pid()
+	require.NotZero(t, pid, "Playwright process PID should not be zero")
+
+	// Kill the process
+	err = killProcessByPid(pid)
 	require.NoError(t, err)
 
 	_, err = context.NewPage()
@@ -172,23 +372,16 @@ func TestGetNodeExecutable(t *testing.T) {
 	assert.Contains(t, executable, "testDirectory")
 }
 
-// find and kill playwright process
-func killPlaywrightProcess() error {
-	all, err := ps.Processes()
-	if err != nil {
-		return err
-	}
-	for _, process := range all {
-		if process.Executable() == "node" || process.Executable() == "node.exe" {
-			if process.PPid() == os.Getpid() {
-				if err := killProcessByPid(process.Pid()); err != nil {
-					return err
-				}
-				return nil
-			}
-		}
-	}
-	return fmt.Errorf("playwright process not found")
+func TestGetDriverCliJs(t *testing.T) {
+	// When PLAYWRIGHT_CLI_PATH is set, use that path directly.
+	t.Setenv("PLAYWRIGHT_CLI_PATH", "/custom/cli.js")
+	assert.Equal(t, "/custom/cli.js", getDriverCliJs("testDirectory"))
+
+	// Otherwise fall back to the assumed <DriverDirectory>/package/cli.js layout.
+	require.NoError(t, os.Unsetenv("PLAYWRIGHT_CLI_PATH"))
+	cliJs := getDriverCliJs("testDirectory")
+	assert.Contains(t, cliJs, "testDirectory")
+	assert.Contains(t, cliJs, "cli.js")
 }
 
 func killProcessByPid(pid int) error {
@@ -225,4 +418,24 @@ func readIOAsyncTilEOF(t *testing.T, r *io.PipeReader, wg *sync.WaitGroup, outpu
 		}
 		_ = r.Close()
 	}()
+}
+
+func requireDriverPackageArtifacts(t *testing.T, driver *PlaywrightDriver, driverPath string) {
+	t.Helper()
+	cliPath := filepath.Join(driverPath, "package", "cli.js")
+	coreBundlePath := filepath.Join(driverPath, "package", "lib", "coreBundle.js")
+	codecPath := filepath.Join(driverPath, "package", "lib", "webp_codec.wasm")
+	for _, expectedPath := range []string{cliPath, coreBundlePath, codecPath} {
+		info, statErr := os.Stat(expectedPath)
+		require.NoError(t, statErr, "installed driver must contain %s", expectedPath)
+		require.False(t, info.IsDir(), "installed driver artifact must be a file: %s", expectedPath)
+	}
+
+	nodeOutput, err := exec.Command(getNodeExecutable(driverPath), "--version").CombinedOutput()
+	require.NoError(t, err, "could not execute installed Node.js: %s", nodeOutput)
+	require.Equal(t, "v"+nodeVersion, strings.TrimSpace(string(nodeOutput)))
+
+	cliOutput, err := driver.Command("--version").CombinedOutput()
+	require.NoError(t, err, "could not execute installed Playwright CLI: %s", cliOutput)
+	require.Equal(t, "Version "+playwrightCliVersion, strings.TrimSpace(string(cliOutput)))
 }
