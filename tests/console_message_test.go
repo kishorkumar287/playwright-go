@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,7 +84,8 @@ func TestConsoleShouldWorkForDifferentConsoleAPICalls(t *testing.T) {
       console.warn('calling console.warn');
       console.error('calling console.error');
       console.log(Promise.resolve('should not wait until resolved!'));
-	}`)
+	}`,
+	)
 	messages := ChanToSlice(messagesChan, 6)
 	require.NoError(t, err)
 	require.Equal(t, []string{
@@ -139,7 +140,13 @@ func TestConsoleShouldTriggerCorrectLog(t *testing.T) {
 	_, err = page.Evaluate("url => fetch(url).catch(e => {})", server.EMPTY_PAGE)
 	require.NoError(t, err)
 	message := <-messages
-	require.Contains(t, message.Text(), "Access-Control-Allow-Origin")
+
+	headerString := "Access-Control-Allow-Origin"
+	corsString := "CORS"
+	require.Condition(t, func() bool {
+		return strings.Contains(message.Text(), headerString) || strings.Contains(message.Text(), corsString)
+	}, "The text should contain either '%s' or '%s'", headerString, corsString)
+
 	require.Equal(t, "error", message.Type())
 }
 
@@ -159,4 +166,8 @@ func TestConsoleShouldHaveLocationForConsoleAPICalls(t *testing.T) {
 	require.Equal(t, message.Type(), "log")
 	require.Equal(t, server.PREFIX+"/consolelog.html", message.Location().URL)
 	require.Equal(t, 7, message.Location().LineNumber)
+	// The non-deprecated Line/Column aliases must be populated too (upstream
+	// maps lineNumber/columnNumber onto line/column).
+	require.Equal(t, message.Location().LineNumber, message.Location().Line)
+	require.Equal(t, message.Location().ColumnNumber, message.Location().Column)
 }

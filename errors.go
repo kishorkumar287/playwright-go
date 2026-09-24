@@ -42,9 +42,10 @@ func (e *Error) Is(target error) bool {
 }
 
 func parseError(err Error) error {
-	if err.Name == "TimeoutError" {
+	switch err.Name {
+	case "TimeoutError":
 		return fmt.Errorf("%w: %w: %w", ErrPlaywright, ErrTimeout, &err)
-	} else if err.Name == "TargetClosedError" {
+	case "TargetClosedError":
 		return fmt.Errorf("%w: %w: %w", ErrPlaywright, ErrTargetClosed, &err)
 	}
 	return fmt.Errorf("%w: %w", ErrPlaywright, &err)
@@ -56,3 +57,17 @@ func targetClosedError(reason *string) error {
 	}
 	return fmt.Errorf("%w: %s", ErrTargetClosed, *reason)
 }
+
+// errorWithDetails wraps a server error that also carries structured
+// errorDetails and a call log. Since v1.61 assertion `expect` failures are
+// reported this way instead of as a `{ matches: false }` result;
+// locatorImpl.expect unwraps it via errors.As to rebuild the expect result.
+type errorWithDetails struct {
+	err     error
+	details map[string]any
+	log     []string
+}
+
+func (e *errorWithDetails) Error() string { return e.err.Error() }
+
+func (e *errorWithDetails) Unwrap() error { return e.err }

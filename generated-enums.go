@@ -135,6 +135,19 @@ var (
 	ColorSchemeNoOverride                = getColorScheme("no-override")
 )
 
+func getContrast(in string) *Contrast {
+	v := Contrast(in)
+	return &v
+}
+
+type Contrast string
+
+var (
+	ContrastNoPreference *Contrast = getContrast("no-preference")
+	ContrastMore                   = getContrast("more")
+	ContrastNoOverride             = getContrast("no-override")
+)
+
 func getForcedColors(in string) *ForcedColors {
 	v := ForcedColors(in)
 	return &v
@@ -248,6 +261,18 @@ var (
 	UnrouteBehaviorDefault                       = getUnrouteBehavior("default")
 )
 
+func getScrollMode(in string) *ScrollMode {
+	v := ScrollMode(in)
+	return &v
+}
+
+type ScrollMode string
+
+var (
+	ScrollModeAuto *ScrollMode = getScrollMode("auto")
+	ScrollModeNone             = getScrollMode("none")
+)
+
 func getMouseButton(in string) *MouseButton {
 	v := MouseButton(in)
 	return &v
@@ -322,6 +347,7 @@ type ScreenshotType string
 var (
 	ScreenshotTypePng  *ScreenshotType = getScreenshotType("png")
 	ScreenshotTypeJpeg                 = getScreenshotType("jpeg")
+	ScreenshotTypeWebp                 = getScreenshotType("webp")
 )
 
 func getWaitForSelectorState(in string) *WaitForSelectorState {
@@ -365,17 +391,28 @@ var (
 	LoadStateNetworkidle                 = getLoadState("networkidle")
 )
 
-func getContrast(in string) *Contrast {
-	v := Contrast(in)
+func getAriaSnapshotMode(in string) *AriaSnapshotMode {
+	v := AriaSnapshotMode(in)
 	return &v
 }
 
-type Contrast string
+type AriaSnapshotMode string
 
 var (
-	ContrastNoPreference *Contrast = getContrast("no-preference")
-	ContrastMore                   = getContrast("more")
-	ContrastNoOverride             = getContrast("no-override")
+	AriaSnapshotModeAi      *AriaSnapshotMode = getAriaSnapshotMode("ai")
+	AriaSnapshotModeDefault                   = getAriaSnapshotMode("default")
+)
+
+func getPseudoElement(in string) *PseudoElement {
+	v := PseudoElement(in)
+	return &v
+}
+
+type PseudoElement string
+
+var (
+	PseudoElementBefore *PseudoElement = getPseudoElement("before")
+	PseudoElementAfter                 = getPseudoElement("after")
 )
 
 func getMedia(in string) *Media {
@@ -389,6 +426,46 @@ var (
 	MediaScreen     *Media = getMedia("screen")
 	MediaPrint             = getMedia("print")
 	MediaNoOverride        = getMedia("no-override")
+)
+
+func getConsoleMessagesFilter(in string) *ConsoleMessagesFilter {
+	v := ConsoleMessagesFilter(in)
+	return &v
+}
+
+type ConsoleMessagesFilter string
+
+var (
+	ConsoleMessagesFilterAll             *ConsoleMessagesFilter = getConsoleMessagesFilter("all")
+	ConsoleMessagesFilterSinceNavigation                        = getConsoleMessagesFilter("since-navigation")
+)
+
+func getScreencastCursor(in string) *ScreencastCursor {
+	v := ScreencastCursor(in)
+	return &v
+}
+
+type ScreencastCursor string
+
+var (
+	ScreencastCursorNone    *ScreencastCursor = getScreencastCursor("none")
+	ScreencastCursorPointer                   = getScreencastCursor("pointer")
+)
+
+func getAnnotatePosition(in string) *AnnotatePosition {
+	v := AnnotatePosition(in)
+	return &v
+}
+
+type AnnotatePosition string
+
+var (
+	AnnotatePositionTopLeft     *AnnotatePosition = getAnnotatePosition("top-left")
+	AnnotatePositionTop                           = getAnnotatePosition("top")
+	AnnotatePositionTopRight                      = getAnnotatePosition("top-right")
+	AnnotatePositionBottomLeft                    = getAnnotatePosition("bottom-left")
+	AnnotatePositionBottom                        = getAnnotatePosition("bottom")
+	AnnotatePositionBottomRight                   = getAnnotatePosition("bottom-right")
 )
 
 func getHttpCredentialsSend(in string) *HttpCredentialsSend {

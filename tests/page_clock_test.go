@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,7 +86,8 @@ func TestPageClockRunFor(t *testing.T) {
 		beforePageClock(t, 0, 1000)
 
 		_, err := page.Evaluate(
-			"setTimeout(window.stub, 100); setTimeout(window.stub, 100); setTimeout(window.stub, 99); setTimeout(window.stub, 100)")
+			"setTimeout(window.stub, 100); setTimeout(window.stub, 100); setTimeout(window.stub, 99); setTimeout(window.stub, 100)",
+		)
 		require.NoError(t, err)
 		require.NoError(t, page.Clock().RunFor(100))
 		require.Eventually(t, func() bool { return calls.Len() == 4 }, 1*time.Second, 10*time.Millisecond)
@@ -332,11 +333,16 @@ func TestPageClockStubTimers(t *testing.T) {
 
 		beforePageClock(t, 0, 1000)
 
+		// Set up a signal to ensure the async function has started
+		_, err := page.Evaluate(`window.timeoutStarted = false`)
+		require.NoError(t, err)
+
 		chanRet := make(chan interface{}, 1)
 		go func() {
 			ret, err := page.Evaluate(`
 			async () => {
 				const prev = performance.now();
+				window.timeoutStarted = true;
 				await new Promise(f => setTimeout(f, 1000));
 				const next = performance.now();
 				return { prev, next };
@@ -347,6 +353,13 @@ func TestPageClockStubTimers(t *testing.T) {
 				close(chanRet)
 			}
 		}()
+
+		// Wait for the async function to start and set up the setTimeout
+		require.Eventually(t, func() bool {
+			started, _ := page.Evaluate(`window.timeoutStarted`)
+			return started == true
+		}, 5*time.Second, 50*time.Millisecond)
+
 		require.NoError(t, page.Clock().RunFor(1000))
 		ret := <-chanRet
 		require.Equal(t, map[string]interface{}{
@@ -372,11 +385,16 @@ func TestPageClockStubTimersPerformance(t *testing.T) {
 
 		beforePageClock(t, 1000, 2000)
 
+		// Set up a signal to ensure the async function has started
+		_, err := page.Evaluate(`window.timeoutStarted = false`)
+		require.NoError(t, err)
+
 		chanRet := make(chan interface{}, 1)
 		go func() {
 			ret, err := page.Evaluate(`
 			async () => {
 				const prev = performance.now();
+				window.timeoutStarted = true;
 				await new Promise(f => setTimeout(f, 1000));
 				const next = performance.now();
 				return { prev, next };
@@ -387,6 +405,13 @@ func TestPageClockStubTimersPerformance(t *testing.T) {
 				close(chanRet)
 			}
 		}()
+
+		// Wait for the async function to start and set up the setTimeout
+		require.Eventually(t, func() bool {
+			started, _ := page.Evaluate(`window.timeoutStarted`)
+			return started == true
+		}, 5*time.Second, 50*time.Millisecond)
+
 		require.NoError(t, page.Clock().RunFor(1000))
 		origin, err := page.Evaluate(`performance.timeOrigin`)
 		require.NoError(t, err)
@@ -400,6 +425,8 @@ func TestPageClockStubTimersPerformance(t *testing.T) {
 }
 
 func TestPageClockPopup(t *testing.T) {
+	skipWebKitMacOSPopup(t)
+
 	t.Run("should tick after popup", func(t *testing.T) {
 		BeforeEach(t)
 
@@ -551,6 +578,20 @@ func TestPageClockFixedTime(t *testing.T) {
 }
 
 func TestPageClockWhileRunning(t *testing.T) {
+	t.Run("should reject an invalid target time with an active animation frame loop", func(t *testing.T) {
+		BeforeEach(t)
+
+		require.NoError(t, page.Clock().Install())
+		require.NoError(t, page.SetContent(`<script>function tick() { requestAnimationFrame(tick); } requestAnimationFrame(tick);</script>`))
+		now, err := page.Evaluate(`Date.now()`)
+		require.NoError(t, err)
+		nowMillis, ok := now.(int)
+		require.True(t, ok, "integral JavaScript numbers should deserialize as int")
+		invalidTime := int64(nowMillis) * 1_000_000
+		err = page.Clock().PauseAt(invalidTime)
+		require.ErrorContains(t, err, fmt.Sprintf("Invalid date: %v", invalidTime))
+	})
+
 	t.Run("should progress time", func(t *testing.T) {
 		BeforeEach(t)
 

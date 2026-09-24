@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -20,13 +21,15 @@ type frameImpl struct {
 	loadStates  mapset.Set[string]
 }
 
-func newFrame(parent *channelOwner, objectType string, guid string, initializer map[string]interface{}) *frameImpl {
-	var loadStates mapset.Set[string]
-
-	if ls, ok := initializer["loadStates"].([]string); ok {
-		loadStates = mapset.NewSet[string](ls...)
-	} else {
-		loadStates = mapset.NewSet[string]()
+func newFrame(parent *channelOwner, objectType string, guid string, initializer map[string]any) *frameImpl {
+	loadStates := mapset.NewSet[string]()
+	// Initializers are JSON-decoded, so an array arrives as []any, never []string.
+	if ls, ok := initializer["loadStates"].([]any); ok {
+		for _, state := range ls {
+			if s, ok := state.(string); ok {
+				loadStates.Add(s)
+			}
+		}
 	}
 	f := &frameImpl{
 		name:        initializer["name"].(string),
@@ -60,9 +63,14 @@ func (f *frameImpl) Name() string {
 }
 
 func (f *frameImpl) SetContent(content string, options ...FrameSetContentOptions) error {
-	_, err := f.channel.Send("setContent", map[string]interface{}{
+	overrides := map[string]any{
 		"html": content,
-	}, options)
+	}
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("setContent", resolveNavigationTimeout(f.page.timeoutSettings, explicit), overrides, options)
 	return err
 }
 
@@ -75,9 +83,14 @@ func (f *frameImpl) Content() (string, error) {
 }
 
 func (f *frameImpl) Goto(url string, options ...FrameGotoOptions) (Response, error) {
-	channel, err := f.channel.Send("goto", map[string]interface{}{
+	overrides := map[string]any{
 		"url": url,
-	}, options)
+	}
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	channel, err := f.channel.SendWithTimeout("goto", resolveNavigationTimeout(f.page.timeoutSettings, explicit), overrides, options)
 	if err != nil {
 		return nil, fmt.Errorf("Frame.Goto %s: %w", url, err)
 	}
@@ -95,7 +108,9 @@ func (f *frameImpl) AddScriptTag(options FrameAddScriptTagOptions) (ElementHandl
 		if err != nil {
 			return nil, err
 		}
-		options.Content = String(string(file))
+		// Append a sourceURL so the injected script is attributed to its file
+		// path in DevTools/traces, matching upstream addSourceUrlToScript.
+		options.Content = String(addSourceURLToScript(string(file), *options.Path))
 		options.Path = nil
 	}
 	channel, err := f.channel.Send("addScriptTag", options)
@@ -111,7 +126,7 @@ func (f *frameImpl) AddStyleTag(options FrameAddStyleTagOptions) (ElementHandle,
 		if err != nil {
 			return nil, err
 		}
-		options.Content = String(string(file))
+		options.Content = String(string(file) + "/*# sourceURL=" + strings.ReplaceAll(*options.Path, "\n", "") + "*/")
 		options.Path = nil
 	}
 	channel, err := f.channel.Send("addStyleTag", options)
@@ -133,10 +148,10 @@ func (f *frameImpl) WaitForLoadState(options ...FrameWaitForLoadStateOptions) er
 	if option.State == nil {
 		option.State = LoadStateLoad
 	}
-	return f.waitForLoadStateImpl(string(*option.State), option.Timeout, nil)
+	return f.waitForLoadStateImpl(string(*option.State), option.Timeout)
 }
 
-func (f *frameImpl) waitForLoadStateImpl(state string, timeout *float64, cb func() error) error {
+func (f *frameImpl) waitForLoadStateImpl(state string, timeout *float64) error {
 	if f.loadStates.ContainsOne(state) {
 		return nil
 	}
@@ -144,20 +159,21 @@ func (f *frameImpl) waitForLoadStateImpl(state string, timeout *float64, cb func
 	if err != nil {
 		return err
 	}
-	waiter.WaitForEvent(f, "loadstate", func(payload interface{}) bool {
+	waiter.WaitForEvent(f, "loadstate", func(payload any) bool {
 		gotState := payload.(string)
 		return gotState == state
 	})
-	if cb == nil {
-		_, err := waiter.Wait()
-		return err
-	} else {
-		_, err := waiter.RunAndWait(cb)
-		return err
+	// Re-check after subscribing: a "loadstate" dispatched between the check
+	// above and the subscription reached no listener and is never replayed.
+	if f.loadStates.ContainsOne(state) {
+		waiter.dispose()
+		return nil
 	}
+	_, err = waiter.Wait()
+	return err
 }
 
-func (f *frameImpl) WaitForURL(url interface{}, options ...FrameWaitForURLOptions) error {
+func (f *frameImpl) WaitForURL(url any, options ...FrameWaitForURLOptions) error {
 	if f.page == nil {
 		return errors.New("frame is detached")
 	}
@@ -173,20 +189,33 @@ func (f *frameImpl) WaitForURL(url interface{}, options ...FrameWaitForURLOption
 				timeout = options[0].Timeout
 			}
 		}
-		return f.waitForLoadStateImpl(state, timeout, nil)
+		return f.waitForLoadStateImpl(state, timeout)
 	}
 	navigationOptions := FrameExpectNavigationOptions{URL: url}
 	if len(options) > 0 {
 		navigationOptions.Timeout = options[0].Timeout
 		navigationOptions.WaitUntil = options[0].WaitUntil
 	}
-	if _, err := f.ExpectNavigation(nil, navigationOptions); err != nil {
+	if _, err := f.expectNavigation(nil, true, navigationOptions); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (f *frameImpl) ExpectNavigation(cb func() error, options ...FrameExpectNavigationOptions) (Response, error) {
+	return f.expectNavigation(cb, false, options...)
+}
+
+// expectNavigation is ExpectNavigation with one extra knob for WaitForURL.
+// With acceptCurrentURL the frame's URL is compared against options.URL once
+// the "navigated" listener is attached; a match means the commit was recorded
+// before the subscription, so the navigation event is skipped, only the load
+// state is awaited and no Response is returned (the event that carried the
+// request is the one that was missed). ExpectNavigation itself must not do
+// this: its contract is to wait for a new navigation, so a reload of the
+// current URL has to be observed rather than short-circuited. Only meaningful
+// with a nil cb; there is no action to run when the navigation has happened.
+func (f *frameImpl) expectNavigation(cb func() error, acceptCurrentURL bool, options ...FrameExpectNavigationOptions) (Response, error) {
 	if f.page == nil {
 		return nil, errors.New("frame is detached")
 	}
@@ -200,13 +229,19 @@ func (f *frameImpl) ExpectNavigation(cb func() error, options ...FrameExpectNavi
 	if option.Timeout == nil {
 		option.Timeout = Float(f.page.timeoutSettings.NavigationTimeout())
 	}
-	deadline := time.Now().Add(time.Duration(*option.Timeout) * time.Millisecond)
+	// A zero timeout disables the timeout. For positive values, use one deadline
+	// across both the navigation event and the requested load state.
+	var deadline *time.Time
+	if *option.Timeout > 0 {
+		d := time.Now().Add(time.Duration(*option.Timeout) * time.Millisecond)
+		deadline = &d
+	}
 	var matcher *urlMatcher
 	if option.URL != nil {
 		matcher = newURLMatcher(option.URL, f.page.browserContext.options.BaseURL)
 	}
-	predicate := func(events ...interface{}) bool {
-		ev := events[0].(map[string]interface{})
+	predicate := func(events ...any) bool {
+		ev := events[0].(map[string]any)
 		err, ok := ev["error"]
 		if ok {
 			// Any failed navigation results in a rejection.
@@ -220,22 +255,39 @@ func (f *frameImpl) ExpectNavigation(cb func() error, options ...FrameExpectNavi
 		return nil, err
 	}
 
-	eventData, err := waiter.WaitForEvent(f, "navigated", predicate).RunAndWait(cb)
-	if err != nil || eventData == nil {
-		return nil, err
-	}
-
-	t := time.Until(deadline).Milliseconds()
-	if t > 0 {
-		err = f.waitForLoadStateImpl(string(*option.WaitUntil), Float(float64(t)), nil)
-		if err != nil {
-			return nil, err
+	waiter.WaitForEvent(f, "navigated", predicate)
+	var event map[string]any
+	if acceptCurrentURL && matcher != nil && matcher.Matches(f.URL()) {
+		waiter.dispose()
+	} else {
+		eventData, waitErr := waiter.RunAndWait(cb)
+		if waitErr != nil || eventData == nil {
+			return nil, waitErr
+		}
+		event = eventData.(map[string]any)
+		if errVal, ok := event["error"]; ok {
+			// Any failed navigation results in a rejection.
+			return nil, errors.New(errVal.(string))
 		}
 	}
-	event := eventData.(map[string]interface{})
-	if event["newDocument"] != nil && event["newDocument"].(map[string]interface{})["request"] != nil {
-		request := fromChannel(event["newDocument"].(map[string]interface{})["request"]).(*requestImpl)
-		return request.Response()
+
+	remaining := option.Timeout
+	if deadline != nil {
+		ms := float64(time.Until(*deadline).Milliseconds())
+		// The waiter interprets zero as unlimited, so use the smallest positive
+		// timeout when the shared budget has just been exhausted.
+		if ms <= 0 {
+			ms = 1
+		}
+		remaining = Float(ms)
+	}
+	if err = f.waitForLoadStateImpl(string(*option.WaitUntil), remaining); err != nil {
+		return nil, err
+	}
+	if event != nil && event["newDocument"] != nil && event["newDocument"].(map[string]any)["request"] != nil {
+		request := fromChannel(event["newDocument"].(map[string]any)["request"]).(*requestImpl)
+		// The response lives on the final request after following any redirects.
+		return request.finalRequest().Response()
 	}
 	return nil, nil
 }
@@ -252,17 +304,25 @@ func (f *frameImpl) setNavigationWaiter(timeout *float64) (*waiter, error) {
 	}
 	waiter.RejectOnEvent(f.page, "close", f.page.closeErrorWithReason())
 	waiter.RejectOnEvent(f.page, "crash", fmt.Errorf("Navigation failed because page crashed!"))
-	waiter.RejectOnEvent(f.page, "framedetached", fmt.Errorf("Navigating frame was detached!"), func(payload interface{}) bool {
+	waiter.RejectOnEvent(f.page, "framedetached", fmt.Errorf("Navigating frame was detached!"), func(payload any) bool {
 		frame, ok := payload.(*frameImpl)
 		if ok && frame == f {
 			return true
 		}
 		return false
 	})
+	// If the page is already closed, fail immediately rather than waiting for
+	// the navigation timeout, matching upstream's rejectImmediately guard. The
+	// check comes after the subscription: a close dispatched in between would
+	// otherwise reach no listener and never be replayed. reject drops the
+	// duplicate when the listener saw it first.
+	if f.page.IsClosed() {
+		waiter.reject(f.page.closeErrorWithReason())
+	}
 	return waiter, nil
 }
 
-func (f *frameImpl) onFrameNavigated(ev map[string]interface{}) {
+func (f *frameImpl) onFrameNavigated(ev map[string]any) {
 	f.Lock()
 	f.url = ev["url"].(string)
 	f.name = ev["name"].(string)
@@ -271,10 +331,13 @@ func (f *frameImpl) onFrameNavigated(ev map[string]interface{}) {
 	_, ok := ev["error"]
 	if !ok && f.page != nil {
 		f.page.Emit("framenavigated", f)
+		if f.page.browserContext != nil {
+			f.page.browserContext.Emit("framenavigated", f)
+		}
 	}
 }
 
-func (f *frameImpl) onLoadState(ev map[string]interface{}) {
+func (f *frameImpl) onLoadState(ev map[string]any) {
 	if ev["add"] != nil {
 		add := ev["add"].(string)
 		f.loadStates.Add(add)
@@ -282,6 +345,9 @@ func (f *frameImpl) onLoadState(ev map[string]interface{}) {
 		if f.parentFrame == nil && f.page != nil {
 			if add == "load" || add == "domcontentloaded" {
 				f.Page().Emit(add, f.page)
+				if add == "load" && f.page.browserContext != nil {
+					f.page.browserContext.Emit("pageload", f.page)
+				}
 			}
 		}
 	} else if ev["remove"] != nil {
@@ -291,7 +357,7 @@ func (f *frameImpl) onLoadState(ev map[string]interface{}) {
 }
 
 func (f *frameImpl) QuerySelector(selector string, options ...FrameQuerySelectorOptions) (ElementHandle, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"selector": selector,
 	}
 	if len(options) == 1 {
@@ -308,25 +374,25 @@ func (f *frameImpl) QuerySelector(selector string, options ...FrameQuerySelector
 }
 
 func (f *frameImpl) QuerySelectorAll(selector string) ([]ElementHandle, error) {
-	channels, err := f.channel.Send("querySelectorAll", map[string]interface{}{
+	channels, err := f.channel.Send("querySelectorAll", map[string]any{
 		"selector": selector,
 	})
 	if err != nil {
 		return nil, err
 	}
 	elements := make([]ElementHandle, 0)
-	for _, channel := range channels.([]interface{}) {
+	for _, channel := range channels.([]any) {
 		elements = append(elements, fromChannel(channel).(*elementHandleImpl))
 	}
 	return elements, nil
 }
 
-func (f *frameImpl) Evaluate(expression string, options ...interface{}) (interface{}, error) {
-	var arg interface{}
+func (f *frameImpl) Evaluate(expression string, options ...any) (any, error) {
+	var arg any
 	if len(options) == 1 {
 		arg = options[0]
 	}
-	result, err := f.channel.Send("evaluateExpression", map[string]interface{}{
+	result, err := f.channel.Send("evaluateExpression", map[string]any{
 		"expression": expression,
 		"arg":        serializeArgument(arg),
 	})
@@ -336,8 +402,8 @@ func (f *frameImpl) Evaluate(expression string, options ...interface{}) (interfa
 	return parseResult(result), nil
 }
 
-func (f *frameImpl) EvalOnSelector(selector string, expression string, arg interface{}, options ...FrameEvalOnSelectorOptions) (interface{}, error) {
-	params := map[string]interface{}{
+func (f *frameImpl) EvalOnSelector(selector string, expression string, arg any, options ...FrameEvalOnSelectorOptions) (any, error) {
+	params := map[string]any{
 		"selector":   selector,
 		"expression": expression,
 		"arg":        serializeArgument(arg),
@@ -353,12 +419,12 @@ func (f *frameImpl) EvalOnSelector(selector string, expression string, arg inter
 	return parseResult(result), nil
 }
 
-func (f *frameImpl) EvalOnSelectorAll(selector string, expression string, options ...interface{}) (interface{}, error) {
-	var arg interface{}
+func (f *frameImpl) EvalOnSelectorAll(selector string, expression string, options ...any) (any, error) {
+	var arg any
 	if len(options) == 1 {
 		arg = options[0]
 	}
-	result, err := f.channel.Send("evalOnSelectorAll", map[string]interface{}{
+	result, err := f.channel.Send("evalOnSelectorAll", map[string]any{
 		"selector":   selector,
 		"expression": expression,
 		"arg":        serializeArgument(arg),
@@ -369,12 +435,12 @@ func (f *frameImpl) EvalOnSelectorAll(selector string, expression string, option
 	return parseResult(result), nil
 }
 
-func (f *frameImpl) EvaluateHandle(expression string, options ...interface{}) (JSHandle, error) {
-	var arg interface{}
+func (f *frameImpl) EvaluateHandle(expression string, options ...any) (JSHandle, error) {
+	var arg any
 	if len(options) == 1 {
 		arg = options[0]
 	}
-	result, err := f.channel.Send("evaluateExpressionHandle", map[string]interface{}{
+	result, err := f.channel.Send("evaluateExpressionHandle", map[string]any{
 		"expression": expression,
 		"arg":        serializeArgument(arg),
 	})
@@ -389,14 +455,22 @@ func (f *frameImpl) EvaluateHandle(expression string, options ...interface{}) (J
 }
 
 func (f *frameImpl) Click(selector string, options ...FrameClickOptions) error {
-	_, err := f.channel.Send("click", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("click", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	return err
 }
 
 func (f *frameImpl) WaitForSelector(selector string, options ...FrameWaitForSelectorOptions) (ElementHandle, error) {
-	channel, err := f.channel.Send("waitForSelector", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	channel, err := f.channel.SendWithTimeout("waitForSelector", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	if err != nil {
@@ -409,17 +483,25 @@ func (f *frameImpl) WaitForSelector(selector string, options ...FrameWaitForSele
 	return channelOwner.(*elementHandleImpl), nil
 }
 
-func (f *frameImpl) DispatchEvent(selector, typ string, eventInit interface{}, options ...FrameDispatchEventOptions) error {
-	_, err := f.channel.Send("dispatchEvent", map[string]interface{}{
+func (f *frameImpl) DispatchEvent(selector, typ string, eventInit any, options ...FrameDispatchEventOptions) error {
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("dispatchEvent", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector":  selector,
 		"type":      typ,
 		"eventInit": serializeArgument(eventInit),
-	})
+	}, options)
 	return err
 }
 
 func (f *frameImpl) InnerText(selector string, options ...FrameInnerTextOptions) (string, error) {
-	innerText, err := f.channel.Send("innerText", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	innerText, err := f.channel.SendWithTimeout("innerText", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	if innerText == nil {
@@ -429,7 +511,11 @@ func (f *frameImpl) InnerText(selector string, options ...FrameInnerTextOptions)
 }
 
 func (f *frameImpl) InnerHTML(selector string, options ...FrameInnerHTMLOptions) (string, error) {
-	innerHTML, err := f.channel.Send("innerHTML", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	innerHTML, err := f.channel.SendWithTimeout("innerHTML", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	if innerHTML == nil {
@@ -439,7 +525,11 @@ func (f *frameImpl) InnerHTML(selector string, options ...FrameInnerHTMLOptions)
 }
 
 func (f *frameImpl) GetAttribute(selector string, name string, options ...FrameGetAttributeOptions) (string, error) {
-	attribute, err := f.channel.Send("getAttribute", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	attribute, err := f.channel.SendWithTimeout("getAttribute", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 		"name":     name,
 	}, options)
@@ -450,24 +540,36 @@ func (f *frameImpl) GetAttribute(selector string, name string, options ...FrameG
 }
 
 func (f *frameImpl) Hover(selector string, options ...FrameHoverOptions) error {
-	_, err := f.channel.Send("hover", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("hover", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	return err
 }
 
-func (f *frameImpl) SetInputFiles(selector string, files interface{}, options ...FrameSetInputFilesOptions) error {
+func (f *frameImpl) SetInputFiles(selector string, files any, options ...FrameSetInputFilesOptions) error {
 	params, err := convertInputFiles(files, f.page.browserContext)
 	if err != nil {
 		return err
 	}
 	params.Selector = &selector
-	_, err = f.channel.Send("setInputFiles", params, options)
+	var option FrameSetInputFilesOptions
+	if len(options) == 1 {
+		option = options[0]
+	}
+	_, err = f.channel.SendWithTimeout("setInputFiles", resolveTimeout(f.page.timeoutSettings, option.Timeout), params, option)
 	return err
 }
 
 func (f *frameImpl) Type(selector, text string, options ...FrameTypeOptions) error {
-	_, err := f.channel.Send("type", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("type", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 		"text":     text,
 	}, options)
@@ -475,7 +577,11 @@ func (f *frameImpl) Type(selector, text string, options ...FrameTypeOptions) err
 }
 
 func (f *frameImpl) Press(selector, key string, options ...FramePressOptions) error {
-	_, err := f.channel.Send("press", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("press", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 		"key":      key,
 	}, options)
@@ -483,34 +589,54 @@ func (f *frameImpl) Press(selector, key string, options ...FramePressOptions) er
 }
 
 func (f *frameImpl) Check(selector string, options ...FrameCheckOptions) error {
-	_, err := f.channel.Send("check", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("check", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	return err
 }
 
 func (f *frameImpl) Uncheck(selector string, options ...FrameUncheckOptions) error {
-	_, err := f.channel.Send("uncheck", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("uncheck", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	return err
 }
 
 func (f *frameImpl) WaitForTimeout(timeout float64) {
-	time.Sleep(time.Duration(timeout) * time.Millisecond)
+	_, _ = f.channel.SendWithTimeout("waitForTimeout", Float(0), map[string]any{
+		"waitTimeout": timeout,
+	})
 }
 
-func (f *frameImpl) WaitForFunction(expression string, arg interface{}, options ...FrameWaitForFunctionOptions) (JSHandle, error) {
+func (f *frameImpl) WaitForFunction(expression string, arg any, options ...FrameWaitForFunctionOptions) (JSHandle, error) {
 	var option FrameWaitForFunctionOptions
 	if len(options) == 1 {
 		option = options[0]
 	}
-	result, err := f.channel.Send("waitForFunction", map[string]interface{}{
+	overrides := map[string]any{
 		"expression": expression,
 		"arg":        serializeArgument(arg),
-		"timeout":    option.Timeout,
-		"polling":    option.Polling,
-	})
+	}
+	// The server expects a numeric `pollingInterval`; the string "raf" means
+	// "poll on requestAnimationFrame" and is conveyed by omitting the interval.
+	switch polling := option.Polling.(type) {
+	case string:
+		if polling != "raf" {
+			return nil, fmt.Errorf("Unknown polling option: %s", polling)
+		}
+	case nil:
+	default:
+		overrides["pollingInterval"] = option.Polling
+	}
+	result, err := f.channel.SendWithTimeout("waitForFunction", resolveTimeout(f.page.timeoutSettings, option.Timeout), overrides)
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +644,7 @@ func (f *frameImpl) WaitForFunction(expression string, arg interface{}, options 
 	if handle == nil {
 		return nil, nil
 	}
-	return handle.(*jsHandleImpl), nil
+	return handle.(JSHandle), nil
 }
 
 func (f *frameImpl) Title() (string, error) {
@@ -534,14 +660,22 @@ func (f *frameImpl) ChildFrames() []Frame {
 }
 
 func (f *frameImpl) Dblclick(selector string, options ...FrameDblclickOptions) error {
-	_, err := f.channel.Send("dblclick", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("dblclick", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	return err
 }
 
 func (f *frameImpl) Fill(selector string, value string, options ...FrameFillOptions) error {
-	_, err := f.channel.Send("fill", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("fill", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 		"value":    value,
 	}, options)
@@ -549,7 +683,11 @@ func (f *frameImpl) Fill(selector string, value string, options ...FrameFillOpti
 }
 
 func (f *frameImpl) Focus(selector string, options ...FrameFocusOptions) error {
-	_, err := f.channel.Send("focus", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("focus", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	return err
@@ -572,7 +710,11 @@ func (f *frameImpl) ParentFrame() Frame {
 }
 
 func (f *frameImpl) TextContent(selector string, options ...FrameTextContentOptions) (string, error) {
-	textContent, err := f.channel.Send("textContent", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	textContent, err := f.channel.SendWithTimeout("textContent", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	if textContent == nil {
@@ -582,7 +724,11 @@ func (f *frameImpl) TextContent(selector string, options ...FrameTextContentOpti
 }
 
 func (f *frameImpl) Tap(selector string, options ...FrameTapOptions) error {
-	_, err := f.channel.Send("tap", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("tap", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	return err
@@ -591,12 +737,16 @@ func (f *frameImpl) Tap(selector string, options ...FrameTapOptions) error {
 func (f *frameImpl) SelectOption(selector string, values SelectOptionValues, options ...FrameSelectOptionOptions) ([]string, error) {
 	opts := convertSelectOptionSet(values)
 
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 	m["selector"] = selector
 	for k, v := range opts {
 		m[k] = v
 	}
-	selected, err := f.channel.Send("selectOption", m, options)
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	selected, err := f.channel.SendWithTimeout("selectOption", resolveTimeout(f.page.timeoutSettings, explicit), m, options)
 	if err != nil {
 		return nil, err
 	}
@@ -605,7 +755,11 @@ func (f *frameImpl) SelectOption(selector string, values SelectOptionValues, opt
 }
 
 func (f *frameImpl) IsChecked(selector string, options ...FrameIsCheckedOptions) (bool, error) {
-	checked, err := f.channel.Send("isChecked", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	checked, err := f.channel.SendWithTimeout("isChecked", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	if err != nil {
@@ -615,7 +769,11 @@ func (f *frameImpl) IsChecked(selector string, options ...FrameIsCheckedOptions)
 }
 
 func (f *frameImpl) IsDisabled(selector string, options ...FrameIsDisabledOptions) (bool, error) {
-	disabled, err := f.channel.Send("isDisabled", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	disabled, err := f.channel.SendWithTimeout("isDisabled", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	if err != nil {
@@ -625,7 +783,11 @@ func (f *frameImpl) IsDisabled(selector string, options ...FrameIsDisabledOption
 }
 
 func (f *frameImpl) IsEditable(selector string, options ...FrameIsEditableOptions) (bool, error) {
-	editable, err := f.channel.Send("isEditable", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	editable, err := f.channel.SendWithTimeout("isEditable", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	if err != nil {
@@ -635,7 +797,11 @@ func (f *frameImpl) IsEditable(selector string, options ...FrameIsEditableOption
 }
 
 func (f *frameImpl) IsEnabled(selector string, options ...FrameIsEnabledOptions) (bool, error) {
-	enabled, err := f.channel.Send("isEnabled", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	enabled, err := f.channel.SendWithTimeout("isEnabled", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	if err != nil {
@@ -645,7 +811,11 @@ func (f *frameImpl) IsEnabled(selector string, options ...FrameIsEnabledOptions)
 }
 
 func (f *frameImpl) IsHidden(selector string, options ...FrameIsHiddenOptions) (bool, error) {
-	hidden, err := f.channel.Send("isHidden", map[string]interface{}{
+	// Timeout is deprecated and intentionally ignored for this immediate query.
+	if len(options) == 1 {
+		options[0].Timeout = nil
+	}
+	hidden, err := f.channel.SendWithTimeout("isHidden", Float(0), map[string]any{
 		"selector": selector,
 	}, options)
 	if err != nil {
@@ -655,7 +825,11 @@ func (f *frameImpl) IsHidden(selector string, options ...FrameIsHiddenOptions) (
 }
 
 func (f *frameImpl) IsVisible(selector string, options ...FrameIsVisibleOptions) (bool, error) {
-	visible, err := f.channel.Send("isVisible", map[string]interface{}{
+	// Timeout is deprecated and intentionally ignored for this immediate query.
+	if len(options) == 1 {
+		options[0].Timeout = nil
+	}
+	visible, err := f.channel.SendWithTimeout("isVisible", Float(0), map[string]any{
 		"selector": selector,
 	}, options)
 	if err != nil {
@@ -665,7 +839,11 @@ func (f *frameImpl) IsVisible(selector string, options ...FrameIsVisibleOptions)
 }
 
 func (f *frameImpl) InputValue(selector string, options ...FrameInputValueOptions) (string, error) {
-	value, err := f.channel.Send("inputValue", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	value, err := f.channel.SendWithTimeout("inputValue", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	if value == nil {
@@ -675,7 +853,11 @@ func (f *frameImpl) InputValue(selector string, options ...FrameInputValueOption
 }
 
 func (f *frameImpl) DragAndDrop(source, target string, options ...FrameDragAndDropOptions) error {
-	_, err := f.channel.Send("dragAndDrop", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := f.channel.SendWithTimeout("dragAndDrop", resolveTimeout(f.page.timeoutSettings, explicit), map[string]any{
 		"source": source,
 		"target": target,
 	}, options)
@@ -683,17 +865,21 @@ func (f *frameImpl) DragAndDrop(source, target string, options ...FrameDragAndDr
 }
 
 func (f *frameImpl) SetChecked(selector string, checked bool, options ...FrameSetCheckedOptions) error {
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	timeout := resolveTimeout(f.page.timeoutSettings, explicit)
 	if checked {
-		_, err := f.channel.Send("check", map[string]interface{}{
-			"selector": selector,
-		}, options)
-		return err
-	} else {
-		_, err := f.channel.Send("uncheck", map[string]interface{}{
+		_, err := f.channel.SendWithTimeout("check", timeout, map[string]any{
 			"selector": selector,
 		}, options)
 		return err
 	}
+	_, err := f.channel.SendWithTimeout("uncheck", timeout, map[string]any{
+		"selector": selector,
+	}, options)
+	return err
 }
 
 func (f *frameImpl) Locator(selector string, options ...FrameLocatorOptions) Locator {
@@ -709,65 +895,97 @@ func (f *frameImpl) Locator(selector string, options ...FrameLocatorOptions) Loc
 	return newLocator(f, selector, option)
 }
 
-func (f *frameImpl) GetByAltText(text interface{}, options ...FrameGetByAltTextOptions) Locator {
+func (f *frameImpl) GetByAltText(text any, options ...FrameGetByAltTextOptions) Locator {
 	exact := false
 	if len(options) == 1 {
-		if *options[0].Exact {
+		if options[0].Exact != nil && *options[0].Exact {
 			exact = true
 		}
 	}
-	return f.Locator(getByAltTextSelector(text, exact))
+	selector, err := getByAltTextSelector(text, exact)
+	if err != nil {
+		return newErrorLocator(f, err)
+	}
+	return f.Locator(selector)
 }
 
-func (f *frameImpl) GetByLabel(text interface{}, options ...FrameGetByLabelOptions) Locator {
+func (f *frameImpl) GetByLabel(text any, options ...FrameGetByLabelOptions) Locator {
 	exact := false
 	if len(options) == 1 {
-		if *options[0].Exact {
+		if options[0].Exact != nil && *options[0].Exact {
 			exact = true
 		}
 	}
-	return f.Locator(getByLabelSelector(text, exact))
+	selector, err := getByLabelSelector(text, exact)
+	if err != nil {
+		return newErrorLocator(f, err)
+	}
+	return f.Locator(selector)
 }
 
-func (f *frameImpl) GetByPlaceholder(text interface{}, options ...FrameGetByPlaceholderOptions) Locator {
+func (f *frameImpl) GetByPlaceholder(text any, options ...FrameGetByPlaceholderOptions) Locator {
 	exact := false
 	if len(options) == 1 {
-		if *options[0].Exact {
+		if options[0].Exact != nil && *options[0].Exact {
 			exact = true
 		}
 	}
-	return f.Locator(getByPlaceholderSelector(text, exact))
+	selector, err := getByPlaceholderSelector(text, exact)
+	if err != nil {
+		return newErrorLocator(f, err)
+	}
+	return f.Locator(selector)
 }
 
 func (f *frameImpl) GetByRole(role AriaRole, options ...FrameGetByRoleOptions) Locator {
 	if len(options) == 1 {
-		return f.Locator(getByRoleSelector(role, LocatorGetByRoleOptions(options[0])))
+		selector, err := getByRoleSelector(role, LocatorGetByRoleOptions(options[0]))
+		if err != nil {
+			return newErrorLocator(f, err)
+		}
+		return f.Locator(selector)
 	}
-	return f.Locator(getByRoleSelector(role))
+	selector, err := getByRoleSelector(role)
+	if err != nil {
+		return newErrorLocator(f, err)
+	}
+	return f.Locator(selector)
 }
 
-func (f *frameImpl) GetByTestId(testId interface{}) Locator {
-	return f.Locator(getByTestIdSelector(getTestIdAttributeName(), testId))
+func (f *frameImpl) GetByTestId(testId any) Locator {
+	selector, err := getByTestIdSelector(getTestIdAttributeName(), testId)
+	if err != nil {
+		return newErrorLocator(f, err)
+	}
+	return f.Locator(selector)
 }
 
-func (f *frameImpl) GetByText(text interface{}, options ...FrameGetByTextOptions) Locator {
+func (f *frameImpl) GetByText(text any, options ...FrameGetByTextOptions) Locator {
 	exact := false
 	if len(options) == 1 {
-		if *options[0].Exact {
+		if options[0].Exact != nil && *options[0].Exact {
 			exact = true
 		}
 	}
-	return f.Locator(getByTextSelector(text, exact))
+	selector, err := getByTextSelector(text, exact)
+	if err != nil {
+		return newErrorLocator(f, err)
+	}
+	return f.Locator(selector)
 }
 
-func (f *frameImpl) GetByTitle(text interface{}, options ...FrameGetByTitleOptions) Locator {
+func (f *frameImpl) GetByTitle(text any, options ...FrameGetByTitleOptions) Locator {
 	exact := false
 	if len(options) == 1 {
-		if *options[0].Exact {
+		if options[0].Exact != nil && *options[0].Exact {
 			exact = true
 		}
 	}
-	return f.Locator(getByTitleSelector(text, exact))
+	selector, err := getByTitleSelector(text, exact)
+	if err != nil {
+		return newErrorLocator(f, err)
+	}
+	return f.Locator(selector)
 }
 
 func (f *frameImpl) FrameLocator(selector string) FrameLocator {
@@ -775,14 +993,14 @@ func (f *frameImpl) FrameLocator(selector string) FrameLocator {
 }
 
 func (f *frameImpl) highlight(selector string) error {
-	_, err := f.channel.Send("highlight", map[string]interface{}{
+	_, err := f.channel.Send("highlight", map[string]any{
 		"selector": selector,
 	})
 	return err
 }
 
 func (f *frameImpl) queryCount(selector string) (int, error) {
-	response, err := f.channel.Send("queryCount", map[string]interface{}{
+	response, err := f.channel.Send("queryCount", map[string]any{
 		"selector": selector,
 	})
 	if err != nil {

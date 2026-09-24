@@ -4,10 +4,50 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
+
+// TestLocatorClickTimeoutIncludesCallLog verifies the server-provided call log
+// is appended to command-error messages (e.g. action timeouts), matching the
+// upstream client which formats `log` onto the error.
+func TestLocatorClickTimeoutIncludesCallLog(t *testing.T) {
+	BeforeEach(t)
+
+	require.NoError(t, page.SetContent(`<div>no button here</div>`))
+	err := page.Locator("button#missing").Click(playwright.LocatorClickOptions{
+		Timeout: playwright.Float(500),
+	})
+	require.ErrorIs(t, err, playwright.ErrTimeout)
+	require.Contains(t, err.Error(), "Call log:")
+	require.Contains(t, err.Error(), "waiting for")
+}
+
+// TestLocatorWithElementExplicitTimeoutCompletes guards the withElement budget
+// floor: when an explicit Timeout is passed, withElement waits for the selector
+// and then hands the inner action the *remaining* budget. If that remainder
+// clamped to 0, the protocol would interpret it as "disable timeout" (infinite)
+// and the action could hang; the floor of 1ms keeps these methods completing.
+func TestLocatorWithElementExplicitTimeoutCompletes(t *testing.T) {
+	BeforeEach(t)
+
+	require.NoError(t, page.SetContent(`<div id="target">select me</div>`))
+	target := page.Locator("#target")
+
+	require.NoError(t, target.ScrollIntoViewIfNeeded(playwright.LocatorScrollIntoViewIfNeededOptions{
+		Timeout: playwright.Float(5000),
+	}))
+	require.NoError(t, target.SelectText(playwright.LocatorSelectTextOptions{
+		Timeout: playwright.Float(5000),
+	}))
+	shot, err := target.Screenshot(playwright.LocatorScreenshotOptions{
+		Timeout: playwright.Float(5000),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, shot)
+}
 
 func TestLocatorAllInnerTexts(t *testing.T) {
 	BeforeEach(t)
@@ -329,6 +369,17 @@ func TestLocatorTextContent(t *testing.T) {
 	require.Equal(t, "Text,\nmore text", result)
 }
 
+func TestLocatorEvaluateShouldWorkOnHiddenElement(t *testing.T) {
+	BeforeEach(t)
+
+	// Evaluate resolves the element with state "attached" rather than the
+	// default "visible", so it must not time out on a hidden element.
+	require.NoError(t, page.SetContent(`<div id="target" style="display:none">hi</div>`))
+	tagName, err := page.Locator("#target").Evaluate(`e => e.tagName`, nil)
+	require.NoError(t, err)
+	require.Equal(t, "DIV", tagName)
+}
+
 func TestLocatorShouldFocusAndBlurButton(t *testing.T) {
 	BeforeEach(t)
 
@@ -486,6 +537,29 @@ func TestLocatorsDragToShouldWork(t *testing.T) {
 	require.True(t, ret.(bool))
 }
 
+func TestLocatorDrop(t *testing.T) {
+	BeforeEach(t)
+
+	require.NoError(t, page.SetContent(`
+		<div id="target" style="width:200px;height:200px;border:1px solid"
+		   ondrop="window.__dropped=event.dataTransfer.getData('text/plain');event.preventDefault()"
+		   ondragover="event.preventDefault()"></div>`))
+
+	// Drop a clipboard-style data payload. The serialized data must be an
+	// array of {mimeType, value} entries for the protocol to accept it.
+	require.NoError(t, page.Locator("#target").Drop(playwright.Payload{
+		Data: map[string]string{"text/plain": "hello-drop"},
+	}))
+	dropped, err := page.Evaluate("() => window.__dropped")
+	require.NoError(t, err)
+	require.Equal(t, "hello-drop", dropped)
+
+	// Drop a file payload, exercising the files -> payloads/localPaths conversion.
+	require.NoError(t, page.Locator("#target").Drop(playwright.Payload{
+		Files: []playwright.InputFile{{Name: "a.txt", MimeType: "text/plain", Buffer: []byte("hi")}},
+	}))
+}
+
 func TestLocatorsShouldUploadFile(t *testing.T) {
 	BeforeEach(t)
 
@@ -511,7 +585,7 @@ func TestLocatorsShouldUploadFileRemote(t *testing.T) {
 	browser1, err := browserType.Connect(remoteServer.url)
 	require.NoError(t, err)
 	require.NotNil(t, browser1)
-	defer browser1.Close()
+	defer browser1.Close() //nolint:errcheck
 
 	browser_context, err := browser1.NewContext()
 	require.NoError(t, err)
@@ -613,13 +687,34 @@ func TestShouldSupportLocatorOr(t *testing.T) {
 	require.NoError(t, expect.Locator(page.Locator("div").Or(page.Locator("span"))).ToHaveCount(2))
 	require.NoError(t, expect.Locator(page.Locator("div").Or(page.Locator("span"))).ToHaveText([]string{"hello", "world"}))
 	require.NoError(t, expect.Locator(
-		page.Locator("span").Or(page.Locator("article")).Or(page.Locator("div"))).ToHaveText([]string{"hello", "world"}))
+		page.Locator("span").Or(page.Locator("article")).Or(page.Locator("div")),
+	).ToHaveText([]string{"hello", "world"}))
 
 	require.NoError(t, expect.Locator(page.Locator("article").Or(page.Locator("something"))).ToHaveCount(0))
 	require.NoError(t, expect.Locator(page.Locator("article").Or(page.Locator("div"))).ToHaveText("hello"))
 	require.NoError(t, expect.Locator(page.Locator("article").Or(page.Locator("span"))).ToHaveText("world"))
 	require.NoError(t, expect.Locator(page.Locator("div").Or(page.Locator("article"))).ToHaveText("hello"))
 	require.NoError(t, expect.Locator(page.Locator("span").Or(page.Locator("article"))).ToHaveText("world"))
+}
+
+// TestLocatorAndOrEnforceSameFrame verifies And/Or and Locator surface an error
+// when the argument belongs to a different frame, matching upstream which throws
+// "Locators must belong to the same frame."
+func TestLocatorAndOrEnforceSameFrame(t *testing.T) {
+	BeforeEach(t)
+
+	_, err := page.Goto(server.PREFIX + "/frames/two-frames.html")
+	require.NoError(t, err)
+	require.Greater(t, len(page.Frames()), 1)
+	frameLocator := page.Frames()[1].Locator("div")
+	mainLocator := page.Locator("div")
+
+	require.ErrorIs(t, mainLocator.And(frameLocator).Err(), playwright.ErrLocatorNotSameFrame)
+	require.ErrorIs(t, mainLocator.Or(frameLocator).Err(), playwright.ErrLocatorNotSameFrame)
+	require.ErrorIs(t, mainLocator.Locator(frameLocator).Err(), playwright.ErrLocatorNotSameFrame)
+
+	// The original locator must NOT be corrupted by a failed cross-frame call.
+	require.NoError(t, mainLocator.Err())
 }
 
 func TestLocatorAndFrameLocatorShouldAcceptLocator(t *testing.T) {
@@ -720,4 +815,167 @@ func TestLocatorShouldSupportFilterVisible(t *testing.T) {
 	require.NoError(t, expect.Locator(page.Locator(".item").Filter(playwright.LocatorFilterOptions{
 		Visible: playwright.Bool(false),
 	}).GetByText("data1")).ToHaveText("Hidden data1"))
+}
+
+// TestLocatorDescribe verifies that Locator.Describe() sets a description
+// Based on upstream test: playwright/tests/page/locator-convenience.spec.ts
+func TestLocatorDescribe(t *testing.T) {
+	BeforeEach(t)
+
+	require.NoError(t, page.SetContent(`<button>Submit</button>`))
+
+	locator := page.Locator("button")
+
+	// Locator without description should return empty string
+	desc, err := locator.Description()
+	require.NoError(t, err)
+	require.Empty(t, desc, "description should be empty for locator without description")
+
+	// Set description
+	describedLocator := locator.Describe("Submit button")
+	desc, err = describedLocator.Description()
+	require.NoError(t, err)
+	require.Equal(t, "Submit button", desc)
+
+	// Original locator should still have no description
+	desc, err = locator.Description()
+	require.NoError(t, err)
+	require.Empty(t, desc, "original locator should remain unchanged")
+}
+
+// TestLocatorDescribeSpecialCharacters verifies descriptions with special characters
+func TestLocatorDescribeSpecialCharacters(t *testing.T) {
+	BeforeEach(t)
+
+	require.NoError(t, page.SetContent(`<div>Test</div>`))
+
+	locator := page.Locator("div").Describe(`Button with "quotes" and 'apostrophes'`)
+	desc, err := locator.Description()
+	require.NoError(t, err)
+	require.Equal(t, `Button with "quotes" and 'apostrophes'`, desc)
+}
+
+// TestLocatorDescribeChained verifies descriptions work with chained locators
+func TestLocatorDescribeChained(t *testing.T) {
+	BeforeEach(t)
+
+	require.NoError(t, page.SetContent(`
+		<form>
+			<input type="text" />
+		</form>
+	`))
+
+	locator := page.Locator("form").Locator("input").Describe("Form input field")
+	desc, err := locator.Description()
+	require.NoError(t, err)
+	require.Equal(t, "Form input field", desc)
+}
+
+// TestLocatorDescribeMultipleCalls verifies multiple describe calls override each other
+func TestLocatorDescribeMultipleCalls(t *testing.T) {
+	BeforeEach(t)
+
+	require.NoError(t, page.SetContent(`<button><span>Click me</span></button>`))
+
+	// First description
+	locator1 := page.Locator("button").Describe("First description")
+	desc, err := locator1.Description()
+	require.NoError(t, err)
+	require.Equal(t, "First description", desc)
+
+	// Second description on chained locator
+	locator2 := locator1.Locator("span").Describe("Second description")
+	desc, err = locator2.Description()
+	require.NoError(t, err)
+	require.Equal(t, "Second description", desc)
+
+	// Chained locator without describe should have no description
+	locator3 := locator2.Locator("span")
+	desc, err = locator3.Description()
+	require.NoError(t, err)
+	require.Empty(t, desc, "chained locator without describe should have empty description")
+}
+
+func TestLocatorWaitForFunction(t *testing.T) {
+	BeforeEach(t)
+	require.NoError(t, page.SetContent(`<div id="el"></div>`))
+	locator := page.Locator("#el")
+
+	// Already truthy: should return immediately.
+	require.NoError(t, locator.WaitForFunction(`element => !!element`, nil))
+
+	// Wait for an attribute to appear.
+	done := make(chan error, 1)
+	go func() {
+		done <- locator.WaitForFunction(`element => element.hasAttribute("data-ready")`, nil,
+			playwright.LocatorWaitForFunctionOptions{Timeout: playwright.Float(5000)})
+	}()
+	time.Sleep(50 * time.Millisecond)
+	_, err := page.Evaluate(`() => document.getElementById("el").setAttribute("data-ready", "1")`)
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+
+	// Scalar argument.
+	require.NoError(t, locator.WaitForFunction(
+		`(element, expected) => element.getAttribute("data-ready") === expected`,
+		"1",
+	))
+}
+
+func TestLocatorWaitForFunctionTimeout(t *testing.T) {
+	BeforeEach(t)
+	require.NoError(t, page.SetContent(`<div id="el"></div>`))
+	err := page.Locator("#el").WaitForFunction(
+		`element => element.hasAttribute("missing")`,
+		nil,
+		playwright.LocatorWaitForFunctionOptions{Timeout: playwright.Float(200)},
+	)
+	require.Error(t, err)
+	require.ErrorIs(t, err, playwright.ErrTimeout)
+}
+
+func TestLocatorWaitForFunctionStrictViolation(t *testing.T) {
+	BeforeEach(t)
+	require.NoError(t, page.SetContent(`<div class="x"></div><div class="x"></div>`))
+	err := page.Locator(".x").WaitForFunction(`element => true`, nil,
+		playwright.LocatorWaitForFunctionOptions{Timeout: playwright.Float(1000)})
+	require.Error(t, err)
+}
+
+func TestLocatorWaitForFunctionElementHandleThrowRerenderAndDefaultTimeout(t *testing.T) {
+	BeforeEach(t)
+	require.NoError(t, page.SetContent(`<div id="el">first</div>`))
+	locator := page.Locator("#el")
+	//nolint:staticcheck // The roll must preserve ElementHandle argument compatibility.
+	handle, err := page.QuerySelector("#el")
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+	defer handle.Dispose() //nolint:errcheck
+
+	require.NoError(t, locator.WaitForFunction(
+		`(element, expected) => element === expected`,
+		handle,
+	))
+
+	err = locator.WaitForFunction(`() => { throw new Error("wait-function-boom") }`, nil)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "wait-function-boom")
+
+	_, err = page.Evaluate(`() => {
+		setTimeout(() => {
+			document.querySelector('#el').outerHTML = '<div id="el" data-ready="yes">second</div>';
+		}, 50);
+	}`)
+	require.NoError(t, err)
+	require.NoError(t, locator.WaitForFunction(
+		`element => element.dataset.ready === "yes"`,
+		nil,
+		playwright.LocatorWaitForFunctionOptions{Timeout: playwright.Float(5000)},
+	))
+
+	page.SetDefaultTimeout(150)
+	started := time.Now()
+	err = locator.WaitForFunction(`element => element.dataset.never === "true"`, nil)
+	require.ErrorIs(t, err, playwright.ErrTimeout)
+	require.Less(t, time.Since(started), 2*time.Second)
 }

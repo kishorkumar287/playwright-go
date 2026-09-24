@@ -5,10 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 type elementHandleImpl struct {
 	jsHandleImpl
+}
+
+func (e *elementHandleImpl) timeoutSettings() *timeoutSettings {
+	// Walk the channel parent chain (Frame → Page) without a network round-trip.
+	for parent := e.parent; parent != nil; parent = parent.parent {
+		if frame, ok := parent.channel.object.(*frameImpl); ok && frame.page != nil {
+			return frame.page.timeoutSettings
+		}
+		if page, ok := parent.channel.object.(*pageImpl); ok {
+			return page.timeoutSettings
+		}
+	}
+	return newTimeoutSettings(nil)
 }
 
 func (e *elementHandleImpl) AsElement() ElementHandle {
@@ -40,7 +54,7 @@ func (e *elementHandleImpl) ContentFrame() (Frame, error) {
 }
 
 func (e *elementHandleImpl) GetAttribute(name string) (string, error) {
-	attribute, err := e.channel.Send("getAttribute", map[string]interface{}{
+	attribute, err := e.channel.Send("getAttribute", map[string]any{
 		"name": name,
 	})
 	if attribute == nil {
@@ -73,12 +87,14 @@ func (e *elementHandleImpl) InnerHTML() (string, error) {
 	return innerHTML.(string), err
 }
 
-func (e *elementHandleImpl) DispatchEvent(typ string, initObjects ...interface{}) error {
-	var initObject interface{}
-	if len(initObjects) == 1 {
+func (e *elementHandleImpl) DispatchEvent(typ string, initObjects ...any) error {
+	// Default eventInit to an empty object (not undefined), matching upstream's
+	// `eventInit: Object = {}`.
+	var initObject any = map[string]any{}
+	if len(initObjects) == 1 && initObjects[0] != nil {
 		initObject = initObjects[0]
 	}
-	_, err := e.channel.Send("dispatchEvent", map[string]interface{}{
+	_, err := e.channel.Send("dispatchEvent", map[string]any{
 		"type":      typ,
 		"eventInit": serializeArgument(initObject),
 	})
@@ -86,22 +102,34 @@ func (e *elementHandleImpl) DispatchEvent(typ string, initObjects ...interface{}
 }
 
 func (e *elementHandleImpl) Hover(options ...ElementHandleHoverOptions) error {
-	_, err := e.channel.Send("hover", options)
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("hover", resolveTimeout(e.timeoutSettings(), explicit), options)
 	return err
 }
 
 func (e *elementHandleImpl) Click(options ...ElementHandleClickOptions) error {
-	_, err := e.channel.Send("click", options)
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("click", resolveTimeout(e.timeoutSettings(), explicit), options)
 	return err
 }
 
 func (e *elementHandleImpl) Dblclick(options ...ElementHandleDblclickOptions) error {
-	_, err := e.channel.Send("dblclick", options)
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("dblclick", resolveTimeout(e.timeoutSettings(), explicit), options)
 	return err
 }
 
 func (e *elementHandleImpl) QuerySelector(selector string) (ElementHandle, error) {
-	channel, err := e.channel.Send("querySelector", map[string]interface{}{
+	channel, err := e.channel.Send("querySelector", map[string]any{
 		"selector": selector,
 	})
 	if err != nil {
@@ -114,25 +142,25 @@ func (e *elementHandleImpl) QuerySelector(selector string) (ElementHandle, error
 }
 
 func (e *elementHandleImpl) QuerySelectorAll(selector string) ([]ElementHandle, error) {
-	channels, err := e.channel.Send("querySelectorAll", map[string]interface{}{
+	channels, err := e.channel.Send("querySelectorAll", map[string]any{
 		"selector": selector,
 	})
 	if err != nil {
 		return nil, err
 	}
 	elements := make([]ElementHandle, 0)
-	for _, channel := range channels.([]interface{}) {
+	for _, channel := range channels.([]any) {
 		elements = append(elements, fromChannel(channel).(*elementHandleImpl))
 	}
 	return elements, nil
 }
 
-func (e *elementHandleImpl) EvalOnSelector(selector string, expression string, options ...interface{}) (interface{}, error) {
-	var arg interface{}
+func (e *elementHandleImpl) EvalOnSelector(selector string, expression string, options ...any) (any, error) {
+	var arg any
 	if len(options) == 1 {
 		arg = options[0]
 	}
-	result, err := e.channel.Send("evalOnSelector", map[string]interface{}{
+	result, err := e.channel.Send("evalOnSelector", map[string]any{
 		"selector":   selector,
 		"expression": expression,
 		"arg":        serializeArgument(arg),
@@ -143,12 +171,12 @@ func (e *elementHandleImpl) EvalOnSelector(selector string, expression string, o
 	return parseResult(result), nil
 }
 
-func (e *elementHandleImpl) EvalOnSelectorAll(selector string, expression string, options ...interface{}) (interface{}, error) {
-	var arg interface{}
+func (e *elementHandleImpl) EvalOnSelectorAll(selector string, expression string, options ...any) (any, error) {
+	var arg any
 	if len(options) == 1 {
 		arg = options[0]
 	}
-	result, err := e.channel.Send("evalOnSelectorAll", map[string]interface{}{
+	result, err := e.channel.Send("evalOnSelectorAll", map[string]any{
 		"selector":   selector,
 		"expression": expression,
 		"arg":        serializeArgument(arg),
@@ -160,14 +188,18 @@ func (e *elementHandleImpl) EvalOnSelectorAll(selector string, expression string
 }
 
 func (e *elementHandleImpl) ScrollIntoViewIfNeeded(options ...ElementHandleScrollIntoViewIfNeededOptions) error {
-	_, err := e.channel.Send("scrollIntoViewIfNeeded", options)
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("scrollIntoViewIfNeeded", resolveTimeout(e.timeoutSettings(), explicit), options)
 	if err != nil {
 		return err
 	}
 	return err
 }
 
-func (e *elementHandleImpl) SetInputFiles(files interface{}, options ...ElementHandleSetInputFilesOptions) error {
+func (e *elementHandleImpl) SetInputFiles(files any, options ...ElementHandleSetInputFilesOptions) error {
 	frame, err := e.OwnerFrame()
 	if err != nil {
 		return err
@@ -180,7 +212,11 @@ func (e *elementHandleImpl) SetInputFiles(files interface{}, options ...ElementH
 	if err != nil {
 		return err
 	}
-	_, err = e.channel.Send("setInputFiles", params, options)
+	var option ElementHandleSetInputFilesOptions
+	if len(options) == 1 {
+		option = options[0]
+	}
+	_, err = e.channel.SendWithTimeout("setInputFiles", resolveTimeout(e.timeoutSettings(), option.Timeout), params, option)
 	return err
 }
 
@@ -200,31 +236,51 @@ func (e *elementHandleImpl) BoundingBox() (*Rect, error) {
 }
 
 func (e *elementHandleImpl) Check(options ...ElementHandleCheckOptions) error {
-	_, err := e.channel.Send("check", options)
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("check", resolveTimeout(e.timeoutSettings(), explicit), options)
 	return err
 }
 
 func (e *elementHandleImpl) Uncheck(options ...ElementHandleUncheckOptions) error {
-	_, err := e.channel.Send("uncheck", options)
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("uncheck", resolveTimeout(e.timeoutSettings(), explicit), options)
 	return err
 }
 
 func (e *elementHandleImpl) Press(key string, options ...ElementHandlePressOptions) error {
-	_, err := e.channel.Send("press", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("press", resolveTimeout(e.timeoutSettings(), explicit), map[string]any{
 		"key": key,
 	}, options)
 	return err
 }
 
 func (e *elementHandleImpl) Fill(value string, options ...ElementHandleFillOptions) error {
-	_, err := e.channel.Send("fill", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("fill", resolveTimeout(e.timeoutSettings(), explicit), map[string]any{
 		"value": value,
 	}, options)
 	return err
 }
 
 func (e *elementHandleImpl) Type(value string, options ...ElementHandleTypeOptions) error {
-	_, err := e.channel.Send("type", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("type", resolveTimeout(e.timeoutSettings(), explicit), map[string]any{
 		"text": value,
 	}, options)
 	return err
@@ -236,25 +292,35 @@ func (e *elementHandleImpl) Focus() error {
 }
 
 func (e *elementHandleImpl) SelectText(options ...ElementHandleSelectTextOptions) error {
-	_, err := e.channel.Send("selectText", options)
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("selectText", resolveTimeout(e.timeoutSettings(), explicit), options)
 	return err
 }
 
 func (e *elementHandleImpl) Screenshot(options ...ElementHandleScreenshotOptions) ([]byte, error) {
 	var path *string
-	overrides := map[string]interface{}{}
+	overrides := map[string]any{}
 	if len(options) == 1 {
 		path = options[0].Path
 		options[0].Path = nil
+		// Infer the image type from the path extension when not set, matching upstream.
+		typ, err := determineScreenshotType(path, options[0].Type)
+		if err != nil {
+			return nil, err
+		}
+		options[0].Type = typ
 		if options[0].Mask != nil {
-			masks := make([]map[string]interface{}, 0)
+			masks := make([]map[string]any, 0)
 			for _, m := range options[0].Mask {
 				if m.Err() != nil { // ErrLocatorNotSameFrame
 					return nil, m.Err()
 				}
 				l, ok := m.(*locatorImpl)
 				if ok {
-					masks = append(masks, map[string]interface{}{
+					masks = append(masks, map[string]any{
 						"selector": l.selector,
 						"frame":    l.frame.channel,
 					})
@@ -264,7 +330,11 @@ func (e *elementHandleImpl) Screenshot(options ...ElementHandleScreenshotOptions
 			options[0].Mask = nil
 		}
 	}
-	data, err := e.channel.Send("screenshot", options, overrides)
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	data, err := e.channel.SendWithTimeout("screenshot", resolveTimeout(e.timeoutSettings(), explicit), options, overrides)
 	if err != nil {
 		return nil, err
 	}
@@ -273,6 +343,9 @@ func (e *elementHandleImpl) Screenshot(options ...ElementHandleScreenshotOptions
 		return nil, fmt.Errorf("could not decode base64 :%w", err)
 	}
 	if path != nil {
+		if err := os.MkdirAll(filepath.Dir(*path), 0o777); err != nil {
+			return nil, err
+		}
 		if err := os.WriteFile(*path, image, 0o644); err != nil {
 			return nil, err
 		}
@@ -281,13 +354,21 @@ func (e *elementHandleImpl) Screenshot(options ...ElementHandleScreenshotOptions
 }
 
 func (e *elementHandleImpl) Tap(options ...ElementHandleTapOptions) error {
-	_, err := e.channel.Send("tap", options)
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("tap", resolveTimeout(e.timeoutSettings(), explicit), options)
 	return err
 }
 
 func (e *elementHandleImpl) SelectOption(values SelectOptionValues, options ...ElementHandleSelectOptionOptions) ([]string, error) {
 	opts := convertSelectOptionSet(values)
-	selected, err := e.channel.Send("selectOption", opts, options)
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	selected, err := e.channel.SendWithTimeout("selectOption", resolveTimeout(e.timeoutSettings(), explicit), opts, options)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +425,11 @@ func (e *elementHandleImpl) IsVisible() (bool, error) {
 }
 
 func (e *elementHandleImpl) WaitForElementState(state ElementState, options ...ElementHandleWaitForElementStateOptions) error {
-	_, err := e.channel.Send("waitForElementState", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	_, err := e.channel.SendWithTimeout("waitForElementState", resolveTimeout(e.timeoutSettings(), explicit), map[string]any{
 		"state": state,
 	}, options)
 	if err != nil {
@@ -354,7 +439,11 @@ func (e *elementHandleImpl) WaitForElementState(state ElementState, options ...E
 }
 
 func (e *elementHandleImpl) WaitForSelector(selector string, options ...ElementHandleWaitForSelectorOptions) (ElementHandle, error) {
-	ch, err := e.channel.Send("waitForSelector", map[string]interface{}{
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	ch, err := e.channel.SendWithTimeout("waitForSelector", resolveTimeout(e.timeoutSettings(), explicit), map[string]any{
 		"selector": selector,
 	}, options)
 	if err != nil {
@@ -369,7 +458,11 @@ func (e *elementHandleImpl) WaitForSelector(selector string, options ...ElementH
 }
 
 func (e *elementHandleImpl) InputValue(options ...ElementHandleInputValueOptions) (string, error) {
-	result, err := e.channel.Send("inputValue", options)
+	// Timeout is deprecated and intentionally ignored for this immediate query.
+	if len(options) == 1 {
+		options[0].Timeout = nil
+	}
+	result, err := e.channel.SendWithTimeout("inputValue", Float(0), options)
 	if result == nil {
 		return "", err
 	}
@@ -377,23 +470,36 @@ func (e *elementHandleImpl) InputValue(options ...ElementHandleInputValueOptions
 }
 
 func (e *elementHandleImpl) SetChecked(checked bool, options ...ElementHandleSetCheckedOptions) error {
+	var explicit *float64
+	if len(options) == 1 {
+		explicit = options[0].Timeout
+	}
+	timeout := resolveTimeout(e.timeoutSettings(), explicit)
 	if checked {
-		_, err := e.channel.Send("check", options)
-		return err
-	} else {
-		_, err := e.channel.Send("uncheck", options)
+		_, err := e.channel.SendWithTimeout("check", timeout, options)
 		return err
 	}
+	_, err := e.channel.SendWithTimeout("uncheck", timeout, options)
+	return err
 }
 
-func newElementHandle(parent *channelOwner, objectType string, guid string, initializer map[string]interface{}) *elementHandleImpl {
+func newElementHandle(parent *channelOwner, objectType string, guid string, initializer map[string]any) *elementHandleImpl {
 	bt := &elementHandleImpl{}
 	bt.createChannelOwner(bt, parent, objectType, guid, initializer)
+	// ElementHandle extends JSHandle: initialize the preview from the initializer
+	// and keep it in sync, so String() returns the element preview (newJSHandle
+	// does this, but ElementHandle is constructed directly).
+	if preview, ok := initializer["preview"].(string); ok {
+		bt.preview = preview
+	}
+	bt.channel.On("previewUpdated", func(ev map[string]any) {
+		bt.preview = ev["preview"].(string)
+	})
 	return bt
 }
 
-func transformToStringList(in interface{}) []string {
-	s := in.([]interface{})
+func transformToStringList(in any) []string {
+	s := in.([]any)
 
 	var out []string
 	for _, v := range s {

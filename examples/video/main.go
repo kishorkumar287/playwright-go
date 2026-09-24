@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 	}
 	page, err := browser.NewPage(playwright.BrowserNewPageOptions{
 		RecordVideo: &playwright.RecordVideo{
-			Dir: "videos/",
+			Dir: playwright.String("videos/"),
 		},
 	})
 	if err != nil {

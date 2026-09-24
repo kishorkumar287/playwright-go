@@ -20,6 +20,9 @@ type APIRequestNewContextOptions struct {
 	// a single `pfxPath`, or their corresponding direct value equivalents (`cert` and `key`, or `pfx`). Optionally,
 	// `passphrase` property should be provided if the certificate is encrypted. The `origin` property should be provided
 	// with an exact match to the request origin that the certificate is valid for.
+	// Client certificate authentication is only active when at least one client certificate is provided. If you want to
+	// reject all client certificates sent by the server, you need to provide a client certificate with an `origin` that
+	// does not match any of the domains you plan to visit.
 	// **NOTE** When using WebKit on macOS, accessing `localhost` will not pick up client certificates. You can make it
 	// work by replacing `localhost` with `local.playwright`.
 	ClientCertificates []ClientCertificate `json:"clientCertificates"`
@@ -60,14 +63,14 @@ type APIRequestContextDeleteOptions struct {
 	// Allows to set post data of the request. If the data parameter is an object, it will be serialized to json string
 	// and `content-type` header will be set to `application/json` if not explicitly set. Otherwise the `content-type`
 	// header will be set to `application/octet-stream` if not explicitly set.
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 	// Whether to throw on response codes other than 2xx and 3xx. By default response object is returned for all status
 	// codes.
 	FailOnStatusCode *bool `json:"failOnStatusCode"`
 	// Provides an object that will be serialized as html form using `application/x-www-form-urlencoded` encoding and sent
 	// as this request body. If this parameter is specified `content-type` header will be set to
 	// `application/x-www-form-urlencoded` unless explicitly provided.
-	Form interface{} `json:"form"`
+	Form any `json:"form"`
 	// Allows to set HTTP headers. These headers will apply to the fetched request as well as any redirects initiated by
 	// it.
 	Headers map[string]string `json:"headers"`
@@ -86,9 +89,9 @@ type APIRequestContextDeleteOptions struct {
 	// name, mime-type and its content.
 	//
 	// [`fs.ReadStream`]: https://nodejs.org/api/fs.html#fs_class_fs_readstream
-	Multipart interface{} `json:"multipart"`
+	Multipart any `json:"multipart"`
 	// Query parameters to be sent with the URL.
-	Params map[string]interface{} `json:"params"`
+	Params map[string]any `json:"params"`
 	// Request timeout in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout.
 	Timeout *float64 `json:"timeout"`
 }
@@ -102,14 +105,14 @@ type APIRequestContextFetchOptions struct {
 	// Allows to set post data of the request. If the data parameter is an object, it will be serialized to json string
 	// and `content-type` header will be set to `application/json` if not explicitly set. Otherwise the `content-type`
 	// header will be set to `application/octet-stream` if not explicitly set.
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 	// Whether to throw on response codes other than 2xx and 3xx. By default response object is returned for all status
 	// codes.
 	FailOnStatusCode *bool `json:"failOnStatusCode"`
 	// Provides an object that will be serialized as html form using `application/x-www-form-urlencoded` encoding and sent
 	// as this request body. If this parameter is specified `content-type` header will be set to
 	// `application/x-www-form-urlencoded` unless explicitly provided.
-	Form interface{} `json:"form"`
+	Form any `json:"form"`
 	// Allows to set HTTP headers. These headers will apply to the fetched request as well as any redirects initiated by
 	// it.
 	Headers map[string]string `json:"headers"`
@@ -134,9 +137,9 @@ type APIRequestContextFetchOptions struct {
 	// name, mime-type and its content.
 	//
 	// [`fs.ReadStream`]: https://nodejs.org/api/fs.html#fs_class_fs_readstream
-	Multipart interface{} `json:"multipart"`
+	Multipart any `json:"multipart"`
 	// Query parameters to be sent with the URL.
-	Params map[string]interface{} `json:"params"`
+	Params map[string]any `json:"params"`
 	// Request timeout in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout.
 	Timeout *float64 `json:"timeout"`
 }
@@ -145,14 +148,14 @@ type APIRequestContextGetOptions struct {
 	// Allows to set post data of the request. If the data parameter is an object, it will be serialized to json string
 	// and `content-type` header will be set to `application/json` if not explicitly set. Otherwise the `content-type`
 	// header will be set to `application/octet-stream` if not explicitly set.
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 	// Whether to throw on response codes other than 2xx and 3xx. By default response object is returned for all status
 	// codes.
 	FailOnStatusCode *bool `json:"failOnStatusCode"`
 	// Provides an object that will be serialized as html form using `application/x-www-form-urlencoded` encoding and sent
 	// as this request body. If this parameter is specified `content-type` header will be set to
 	// `application/x-www-form-urlencoded` unless explicitly provided.
-	Form interface{} `json:"form"`
+	Form any `json:"form"`
 	// Allows to set HTTP headers. These headers will apply to the fetched request as well as any redirects initiated by
 	// it.
 	Headers map[string]string `json:"headers"`
@@ -171,9 +174,9 @@ type APIRequestContextGetOptions struct {
 	// name, mime-type and its content.
 	//
 	// [`fs.ReadStream`]: https://nodejs.org/api/fs.html#fs_class_fs_readstream
-	Multipart interface{} `json:"multipart"`
+	Multipart any `json:"multipart"`
 	// Query parameters to be sent with the URL.
-	Params map[string]interface{} `json:"params"`
+	Params map[string]any `json:"params"`
 	// Request timeout in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout.
 	Timeout *float64 `json:"timeout"`
 }
@@ -182,14 +185,14 @@ type APIRequestContextHeadOptions struct {
 	// Allows to set post data of the request. If the data parameter is an object, it will be serialized to json string
 	// and `content-type` header will be set to `application/json` if not explicitly set. Otherwise the `content-type`
 	// header will be set to `application/octet-stream` if not explicitly set.
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 	// Whether to throw on response codes other than 2xx and 3xx. By default response object is returned for all status
 	// codes.
 	FailOnStatusCode *bool `json:"failOnStatusCode"`
 	// Provides an object that will be serialized as html form using `application/x-www-form-urlencoded` encoding and sent
 	// as this request body. If this parameter is specified `content-type` header will be set to
 	// `application/x-www-form-urlencoded` unless explicitly provided.
-	Form interface{} `json:"form"`
+	Form any `json:"form"`
 	// Allows to set HTTP headers. These headers will apply to the fetched request as well as any redirects initiated by
 	// it.
 	Headers map[string]string `json:"headers"`
@@ -208,9 +211,9 @@ type APIRequestContextHeadOptions struct {
 	// name, mime-type and its content.
 	//
 	// [`fs.ReadStream`]: https://nodejs.org/api/fs.html#fs_class_fs_readstream
-	Multipart interface{} `json:"multipart"`
+	Multipart any `json:"multipart"`
 	// Query parameters to be sent with the URL.
-	Params map[string]interface{} `json:"params"`
+	Params map[string]any `json:"params"`
 	// Request timeout in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout.
 	Timeout *float64 `json:"timeout"`
 }
@@ -219,14 +222,14 @@ type APIRequestContextPatchOptions struct {
 	// Allows to set post data of the request. If the data parameter is an object, it will be serialized to json string
 	// and `content-type` header will be set to `application/json` if not explicitly set. Otherwise the `content-type`
 	// header will be set to `application/octet-stream` if not explicitly set.
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 	// Whether to throw on response codes other than 2xx and 3xx. By default response object is returned for all status
 	// codes.
 	FailOnStatusCode *bool `json:"failOnStatusCode"`
 	// Provides an object that will be serialized as html form using `application/x-www-form-urlencoded` encoding and sent
 	// as this request body. If this parameter is specified `content-type` header will be set to
 	// `application/x-www-form-urlencoded` unless explicitly provided.
-	Form interface{} `json:"form"`
+	Form any `json:"form"`
 	// Allows to set HTTP headers. These headers will apply to the fetched request as well as any redirects initiated by
 	// it.
 	Headers map[string]string `json:"headers"`
@@ -245,9 +248,9 @@ type APIRequestContextPatchOptions struct {
 	// name, mime-type and its content.
 	//
 	// [`fs.ReadStream`]: https://nodejs.org/api/fs.html#fs_class_fs_readstream
-	Multipart interface{} `json:"multipart"`
+	Multipart any `json:"multipart"`
 	// Query parameters to be sent with the URL.
-	Params map[string]interface{} `json:"params"`
+	Params map[string]any `json:"params"`
 	// Request timeout in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout.
 	Timeout *float64 `json:"timeout"`
 }
@@ -256,14 +259,14 @@ type APIRequestContextPostOptions struct {
 	// Allows to set post data of the request. If the data parameter is an object, it will be serialized to json string
 	// and `content-type` header will be set to `application/json` if not explicitly set. Otherwise the `content-type`
 	// header will be set to `application/octet-stream` if not explicitly set.
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 	// Whether to throw on response codes other than 2xx and 3xx. By default response object is returned for all status
 	// codes.
 	FailOnStatusCode *bool `json:"failOnStatusCode"`
 	// Provides an object that will be serialized as html form using `application/x-www-form-urlencoded` encoding and sent
 	// as this request body. If this parameter is specified `content-type` header will be set to
 	// `application/x-www-form-urlencoded` unless explicitly provided.
-	Form interface{} `json:"form"`
+	Form any `json:"form"`
 	// Allows to set HTTP headers. These headers will apply to the fetched request as well as any redirects initiated by
 	// it.
 	Headers map[string]string `json:"headers"`
@@ -282,9 +285,9 @@ type APIRequestContextPostOptions struct {
 	// name, mime-type and its content.
 	//
 	// [`fs.ReadStream`]: https://nodejs.org/api/fs.html#fs_class_fs_readstream
-	Multipart interface{} `json:"multipart"`
+	Multipart any `json:"multipart"`
 	// Query parameters to be sent with the URL.
-	Params map[string]interface{} `json:"params"`
+	Params map[string]any `json:"params"`
 	// Request timeout in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout.
 	Timeout *float64 `json:"timeout"`
 }
@@ -293,14 +296,14 @@ type APIRequestContextPutOptions struct {
 	// Allows to set post data of the request. If the data parameter is an object, it will be serialized to json string
 	// and `content-type` header will be set to `application/json` if not explicitly set. Otherwise the `content-type`
 	// header will be set to `application/octet-stream` if not explicitly set.
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 	// Whether to throw on response codes other than 2xx and 3xx. By default response object is returned for all status
 	// codes.
 	FailOnStatusCode *bool `json:"failOnStatusCode"`
 	// Provides an object that will be serialized as html form using `application/x-www-form-urlencoded` encoding and sent
 	// as this request body. If this parameter is specified `content-type` header will be set to
 	// `application/x-www-form-urlencoded` unless explicitly provided.
-	Form interface{} `json:"form"`
+	Form any `json:"form"`
 	// Allows to set HTTP headers. These headers will apply to the fetched request as well as any redirects initiated by
 	// it.
 	Headers map[string]string `json:"headers"`
@@ -319,9 +322,9 @@ type APIRequestContextPutOptions struct {
 	// name, mime-type and its content.
 	//
 	// [`fs.ReadStream`]: https://nodejs.org/api/fs.html#fs_class_fs_readstream
-	Multipart interface{} `json:"multipart"`
+	Multipart any `json:"multipart"`
 	// Query parameters to be sent with the URL.
-	Params map[string]interface{} `json:"params"`
+	Params map[string]any `json:"params"`
 	// Request timeout in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout.
 	Timeout *float64 `json:"timeout"`
 }
@@ -329,6 +332,18 @@ type APIRequestContextPutOptions struct {
 type StorageState struct {
 	Cookies []Cookie `json:"cookies"`
 	Origins []Origin `json:"origins"`
+	// Virtual WebAuthn credentials. BrowserContext captures and restores them; APIRequestContext ignores this field and
+	// never populates it.
+	Credentials []VirtualCredential `json:"credentials"`
+}
+
+type APIRequestContextStorageStateOptions struct {
+	// Set to `true` to include IndexedDB in the storage state snapshot.
+	IndexedDB *bool `json:"indexedDB"`
+	// The file path to save the storage state to. If “[object Object]” is a relative path, then it is resolved relative
+	// to current working directory. If no path is provided, storage state is still returned, but won't be saved to the
+	// disk.
+	Path *string `json:"path"`
 }
 
 type NameValue struct {
@@ -336,6 +351,57 @@ type NameValue struct {
 	Name string `json:"name"`
 	// Value of the header.
 	Value string `json:"value"`
+}
+
+type ResponseSecurityDetailsResult struct {
+	// Common Name component of the Issuer field. from the certificate. This should only be used for informational
+	// purposes. Optional.
+	Issuer *string `json:"issuer"`
+	// The specific TLS protocol used. (e.g. `TLS 1.3`). Optional.
+	Protocol *string `json:"protocol"`
+	// Common Name component of the Subject field from the certificate. This should only be used for informational
+	// purposes. Optional.
+	SubjectName *string `json:"subjectName"`
+	// Unix timestamp (in seconds) specifying when this cert becomes valid. Optional.
+	ValidFrom *float64 `json:"validFrom"`
+	// Unix timestamp (in seconds) specifying when this cert becomes invalid. Optional.
+	ValidTo *float64 `json:"validTo"`
+}
+
+type ResponseServerAddrResult struct {
+	// IPv4 or IPV6 address of the server.
+	IpAddress string `json:"ipAddress"`
+	Port      int    `json:"port"`
+}
+
+type RequestTiming struct {
+	// Request start time in milliseconds elapsed since January 1, 1970 00:00:00 UTC
+	StartTime float64 `json:"startTime"`
+	// Time immediately before the client starts the domain name lookup for the resource. The value is given in
+	// milliseconds relative to `startTime`, -1 if not available.
+	DomainLookupStart float64 `json:"domainLookupStart"`
+	// Time immediately after the client ends the domain name lookup for the resource. The value is given in milliseconds
+	// relative to `startTime`, -1 if not available.
+	DomainLookupEnd float64 `json:"domainLookupEnd"`
+	// Time immediately before the client starts establishing the connection to the server to retrieve the resource. The
+	// value is given in milliseconds relative to `startTime`, -1 if not available.
+	ConnectStart float64 `json:"connectStart"`
+	// Time immediately before the client starts the handshake process to secure the current connection. The value is
+	// given in milliseconds relative to `startTime`, -1 if not available.
+	SecureConnectionStart float64 `json:"secureConnectionStart"`
+	// Time immediately after the client establishes the connection to the server to retrieve the resource. The value is
+	// given in milliseconds relative to `startTime`, -1 if not available.
+	ConnectEnd float64 `json:"connectEnd"`
+	// Time immediately before the client starts requesting the resource from the server, cache, or local resource. The
+	// value is given in milliseconds relative to `startTime`, -1 if not available.
+	RequestStart float64 `json:"requestStart"`
+	// Time immediately after the client receives the first byte of the response from the server, cache, or local
+	// resource. The value is given in milliseconds relative to `startTime`, -1 if not available.
+	ResponseStart float64 `json:"responseStart"`
+	// Time immediately after the client receives the last byte of the resource or immediately before the transport
+	// connection is closed, whichever comes first. The value is given in milliseconds relative to `startTime`, -1 if not
+	// available.
+	ResponseEnd float64 `json:"responseEnd"`
 }
 
 type BrowserCloseOptions struct {
@@ -367,6 +433,9 @@ type BrowserNewContextOptions struct {
 	// a single `pfxPath`, or their corresponding direct value equivalents (`cert` and `key`, or `pfx`). Optionally,
 	// `passphrase` property should be provided if the certificate is encrypted. The `origin` property should be provided
 	// with an exact match to the request origin that the certificate is valid for.
+	// Client certificate authentication is only active when at least one client certificate is provided. If you want to
+	// reject all client certificates sent by the server, you need to provide a client certificate with an `origin` that
+	// does not match any of the domains you plan to visit.
 	// **NOTE** When using WebKit on macOS, accessing `localhost` will not pick up client certificates. You can make it
 	// work by replacing `localhost` with `local.playwright`.
 	ClientCertificates []ClientCertificate `json:"clientCertificates"`
@@ -376,6 +445,10 @@ type BrowserNewContextOptions struct {
 	//
 	// [prefers-colors-scheme]: https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme
 	ColorScheme *ColorScheme `json:"colorScheme"`
+	// Emulates `prefers-contrast` media feature, supported values are `no-preference`, `more`. See
+	// [Page.EmulateMedia] for more details. Passing `no-override` resets emulation to system defaults. Defaults to
+	// `no-preference`.
+	Contrast *Contrast `json:"contrast"`
 	// Specify device scale factor (can be thought of as dpr). Defaults to `1`. Learn more about
 	// [emulating devices with device scale factor].
 	//
@@ -442,8 +515,8 @@ type BrowserNewContextOptions struct {
 	// to be saved.
 	//
 	// [HAR]: http://www.softwareishard.com/blog/har-12-spec
-	RecordHarPath      *string     `json:"recordHarPath"`
-	RecordHarURLFilter interface{} `json:"recordHarUrlFilter"`
+	RecordHarPath      *string `json:"recordHarPath"`
+	RecordHarURLFilter any     `json:"recordHarUrlFilter"`
 	// Enables video recording for all pages into `recordVideo.dir` directory. If not specified videos are not recorded.
 	// Make sure to await [BrowserContext.Close] for videos to be saved.
 	RecordVideo *RecordVideo `json:"recordVideo"`
@@ -514,6 +587,9 @@ type BrowserNewPageOptions struct {
 	// a single `pfxPath`, or their corresponding direct value equivalents (`cert` and `key`, or `pfx`). Optionally,
 	// `passphrase` property should be provided if the certificate is encrypted. The `origin` property should be provided
 	// with an exact match to the request origin that the certificate is valid for.
+	// Client certificate authentication is only active when at least one client certificate is provided. If you want to
+	// reject all client certificates sent by the server, you need to provide a client certificate with an `origin` that
+	// does not match any of the domains you plan to visit.
 	// **NOTE** When using WebKit on macOS, accessing `localhost` will not pick up client certificates. You can make it
 	// work by replacing `localhost` with `local.playwright`.
 	ClientCertificates []ClientCertificate `json:"clientCertificates"`
@@ -523,6 +599,10 @@ type BrowserNewPageOptions struct {
 	//
 	// [prefers-colors-scheme]: https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme
 	ColorScheme *ColorScheme `json:"colorScheme"`
+	// Emulates `prefers-contrast` media feature, supported values are `no-preference`, `more`. See
+	// [Page.EmulateMedia] for more details. Passing `no-override` resets emulation to system defaults. Defaults to
+	// `no-preference`.
+	Contrast *Contrast `json:"contrast"`
 	// Specify device scale factor (can be thought of as dpr). Defaults to `1`. Learn more about
 	// [emulating devices with device scale factor].
 	//
@@ -589,8 +669,8 @@ type BrowserNewPageOptions struct {
 	// to be saved.
 	//
 	// [HAR]: http://www.softwareishard.com/blog/har-12-spec
-	RecordHarPath      *string     `json:"recordHarPath"`
-	RecordHarURLFilter interface{} `json:"recordHarUrlFilter"`
+	RecordHarPath      *string `json:"recordHarPath"`
+	RecordHarURLFilter any     `json:"recordHarUrlFilter"`
 	// Enables video recording for all pages into `recordVideo.dir` directory. If not specified videos are not recorded.
 	// Make sure to await [BrowserContext.Close] for videos to be saved.
 	RecordVideo *RecordVideo `json:"recordVideo"`
@@ -637,6 +717,20 @@ type BrowserNewPageOptions struct {
 	Viewport *Size `json:"viewport"`
 }
 
+type Bind struct {
+	Endpoint string `json:"endpoint"`
+}
+
+type BrowserBindOptions struct {
+	// Host to bind the web socket server to. When specified, a web socket server is created instead of a named pipe.
+	Host *string `json:"host"`
+	// Port to bind the web socket server to. When specified, a web socket server is created instead of a named pipe. Use
+	// `0` to let the OS pick an available port.
+	Port *int `json:"port"`
+	// Working directory associated with this browser server.
+	WorkspaceDir *string `json:"workspaceDir"`
+}
+
 type BrowserStartTracingOptions struct {
 	// specify custom categories to use instead of default.
 	Categories []string `json:"categories"`
@@ -651,12 +745,12 @@ type BrowserStartTracingOptions struct {
 type OptionalCookie struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
-	// Either url or domain / path are required. Optional.
+	// Either `url` or both `domain` and `path` are required. Optional.
 	URL *string `json:"url"`
-	// For the cookie to apply to all subdomains as well, prefix domain with a dot, like this: ".example.com". Either url
-	// or domain / path are required. Optional.
+	// For the cookie to apply to all subdomains as well, prefix domain with a dot, like this: ".example.com". Either
+	// `url` or both `domain` and `path` are required. Optional.
 	Domain *string `json:"domain"`
-	// Either url or domain / path are required Optional.
+	// Either `url` or both `domain` and `path` are required. Optional.
 	Path *string `json:"path"`
 	// Unix time in seconds. Optional.
 	Expires *float64 `json:"expires"`
@@ -666,6 +760,12 @@ type OptionalCookie struct {
 	Secure *bool `json:"secure"`
 	// Optional.
 	SameSite *SameSiteAttribute `json:"sameSite"`
+	// For partitioned third-party cookies (aka
+	// [CHIPS], the
+	// partition key. Optional.
+	//
+	// [CHIPS]: https://developer.mozilla.org/en-US/docs/Web/Privacy/Guides/Privacy_sandbox/Partitioned_cookies)
+	PartitionKey *string `json:"partitionKey"`
 }
 
 type Script struct {
@@ -678,11 +778,11 @@ type Script struct {
 
 type BrowserContextClearCookiesOptions struct {
 	// Only removes cookies with the given domain.
-	Domain interface{} `json:"domain"`
+	Domain any `json:"domain"`
 	// Only removes cookies with the given name.
-	Name interface{} `json:"name"`
+	Name any `json:"name"`
 	// Only removes cookies with the given path.
-	Path interface{} `json:"path"`
+	Path any `json:"path"`
 }
 
 type BrowserContextCloseOptions struct {
@@ -696,10 +796,11 @@ type Cookie struct {
 	Domain string `json:"domain"`
 	Path   string `json:"path"`
 	// Unix time in seconds.
-	Expires  float64            `json:"expires"`
-	HttpOnly bool               `json:"httpOnly"`
-	Secure   bool               `json:"secure"`
-	SameSite *SameSiteAttribute `json:"sameSite"`
+	Expires      float64            `json:"expires"`
+	HttpOnly     bool               `json:"httpOnly"`
+	Secure       bool               `json:"secure"`
+	SameSite     *SameSiteAttribute `json:"sameSite"`
+	PartitionKey *string            `json:"partitionKey"`
 }
 
 type BrowserContextGrantPermissionsOptions struct {
@@ -724,7 +825,7 @@ type BrowserContextRouteFromHAROptions struct {
 	UpdateMode *HarMode `json:"updateMode"`
 	// A glob pattern, regular expression or predicate to match the request URL. Only requests with URL matching the
 	// pattern will be served from the HAR file. If not specified, all requests are served from the HAR file.
-	URL interface{} `json:"url"`
+	URL any `json:"url"`
 }
 
 type Geolocation struct {
@@ -734,6 +835,25 @@ type Geolocation struct {
 	Longitude float64 `json:"longitude"`
 	// Non-negative accuracy value. Defaults to `0`.
 	Accuracy *float64 `json:"accuracy"`
+}
+
+type BrowserContextStorageStateOptions struct {
+	// Set to `true` to include the context's virtual WebAuthn [BrowserContext.Credentials] (passkeys) in the storage
+	// state snapshot. The captured credentials carry their private keys, so they can be re-seeded into a later context
+	// via the “[object Object]” option or [BrowserContext.SetStorageState]. Note that restoring the storage state that
+	// contains credentials will automatically install the virtual WebAuthn authenticator (see [Credentials.Install]), and
+	// prevent all real authenticators from working in this context.
+	Credentials *bool `json:"credentials"`
+	// Set to `true` to include [IndexedDB] in the storage
+	// state snapshot. If your application uses IndexedDB to store authentication tokens, like Firebase Authentication,
+	// enable this.
+	//
+	// [IndexedDB]: https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API
+	IndexedDB *bool `json:"indexedDB"`
+	// The file path to save the storage state to. If “[object Object]” is a relative path, then it is resolved relative
+	// to current working directory. If no path is provided, storage state is still returned, but won't be saved to the
+	// disk.
+	Path *string `json:"path"`
 }
 
 type BrowserContextUnrouteAllOptions struct {
@@ -756,7 +876,7 @@ type BrowserContextExpectConsoleMessageOptions struct {
 
 type BrowserContextExpectEventOptions struct {
 	// Receives the event data and resolves to truthy value when the waiting should resolve.
-	Predicate interface{} `json:"predicate"`
+	Predicate any `json:"predicate"`
 	// Maximum time to wait for in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The
 	// default value can be changed by using the [BrowserContext.SetDefaultTimeout].
 	Timeout *float64 `json:"timeout"`
@@ -772,7 +892,7 @@ type BrowserContextExpectPageOptions struct {
 
 type BrowserContextWaitForEventOptions struct {
 	// Receives the event data and resolves to truthy value when the waiting should resolve.
-	Predicate interface{} `json:"predicate"`
+	Predicate any `json:"predicate"`
 	// Maximum time to wait for in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The
 	// default value can be changed by using the [BrowserContext.SetDefaultTimeout].
 	Timeout *float64 `json:"timeout"`
@@ -801,8 +921,19 @@ type BrowserTypeConnectOptions struct {
 }
 
 type BrowserTypeConnectOverCDPOptions struct {
+	// If specified, browser artifacts (such as traces and downloads) are saved into this directory.
+	ArtifactsDir *string `json:"artifactsDir"`
 	// Additional HTTP headers to be sent with connect request. Optional.
 	Headers map[string]string `json:"headers"`
+	// Tells Playwright that it runs on the same host as the CDP server. It will enable certain optimizations that rely
+	// upon the file system being the same between Playwright and the Browser.
+	IsLocal *bool `json:"isLocal"`
+	// When true, Playwright will not apply its default overrides to the existing default browser context. Specifically,
+	// “[object Object]” is left at the browser's setting, focus emulation is not enabled, and media emulation options
+	// (such as “[object Object]”, “[object Object]”, “[object Object]”, and “[object Object]”) are not applied. Useful
+	// when attaching to a user's daily-driver browser where these overrides would interfere with existing browser state.
+	// New contexts created via [Browser.NewContext] are not affected. Defaults to `false`.
+	NoDefaults *bool `json:"noDefaults"`
 	// Slows down Playwright operations by the specified amount of milliseconds. Useful so that you can see what is going
 	// on. Defaults to 0.
 	SlowMo *float64 `json:"slowMo"`
@@ -818,6 +949,10 @@ type BrowserTypeLaunchOptions struct {
 	//
 	// [here]: https://peter.sh/experiments/chromium-command-line-switches/
 	Args []string `json:"args"`
+	// If specified, artifacts (traces, videos, downloads, HAR files, etc.) are saved into this directory. The directory
+	// is not cleaned up when the browser closes. If not specified, a temporary directory is used and cleaned up when the
+	// browser closes.
+	ArtifactsDir *string `json:"artifactsDir"`
 	// Browser distribution channel.
 	// Use "chromium" to [opt in to new headless mode].
 	// Use "chrome", "chrome-beta", "chrome-dev", "chrome-canary", "msedge", "msedge-beta", "msedge-dev", or
@@ -828,13 +963,6 @@ type BrowserTypeLaunchOptions struct {
 	Channel *string `json:"channel"`
 	// Enable Chromium sandboxing. Defaults to `false`.
 	ChromiumSandbox *bool `json:"chromiumSandbox"`
-	// **Chromium-only** Whether to auto-open a Developer Tools panel for each tab. If this option is `true`, the
-	// “[object Object]” option will be set `false`.
-	//
-	// Deprecated: Use [debugging tools] instead.
-	//
-	// [debugging tools]: https://playwright.dev/docs/debug
-	Devtools *bool `json:"devtools"`
 	// If specified, accepted downloads are downloaded into this directory. Otherwise, temporary directory is created and
 	// is deleted when browser is closed. In either case, the downloads are deleted when the browser context they were
 	// created in is closed.
@@ -847,9 +975,12 @@ type BrowserTypeLaunchOptions struct {
 	ExecutablePath *string `json:"executablePath"`
 	// Firefox user preferences. Learn more about the Firefox user preferences at
 	// [`about:config`].
+	// You can also provide a path to a custom [`policies.json` file] via
+	// `PLAYWRIGHT_FIREFOX_POLICIES_JSON` environment variable.
 	//
 	// [`about:config`]: https://support.mozilla.org/en-US/kb/about-config-editor-firefox
-	FirefoxUserPrefs map[string]interface{} `json:"firefoxUserPrefs"`
+	// [`policies.json` file]: https://mozilla.github.io/policy-templates/
+	FirefoxUserPrefs map[string]any `json:"firefoxUserPrefs"`
 	// Close the browser process on SIGHUP. Defaults to `true`.
 	HandleSIGHUP *bool `json:"handleSIGHUP"`
 	// Close the browser process on Ctrl-C. Defaults to `true`.
@@ -858,8 +989,7 @@ type BrowserTypeLaunchOptions struct {
 	HandleSIGTERM *bool `json:"handleSIGTERM"`
 	// Whether to run browser in headless mode. More details for
 	// [Chromium] and
-	// [Firefox]. Defaults to `true` unless the
-	// “[object Object]” option is `true`.
+	// [Firefox]. Defaults to `true`.
 	//
 	// [Chromium]: https://developers.google.com/web/updates/2017/04/headless-chrome
 	// [Firefox]: https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/
@@ -891,6 +1021,10 @@ type BrowserTypeLaunchPersistentContextOptions struct {
 	//
 	// [here]: https://peter.sh/experiments/chromium-command-line-switches/
 	Args []string `json:"args"`
+	// If specified, artifacts (traces, videos, downloads, HAR files, etc.) are saved into this directory. The directory
+	// is not cleaned up when the browser closes. If not specified, a temporary directory is used and cleaned up when the
+	// browser closes.
+	ArtifactsDir *string `json:"artifactsDir"`
 	// When using [Page.Goto], [Page.Route], [Page.WaitForURL], [Page.ExpectRequest], or [Page.ExpectResponse] it takes
 	// the base URL in consideration by using the [`URL()`]
 	// constructor for building the corresponding URL. Unset by default. Examples:
@@ -922,6 +1056,9 @@ type BrowserTypeLaunchPersistentContextOptions struct {
 	// a single `pfxPath`, or their corresponding direct value equivalents (`cert` and `key`, or `pfx`). Optionally,
 	// `passphrase` property should be provided if the certificate is encrypted. The `origin` property should be provided
 	// with an exact match to the request origin that the certificate is valid for.
+	// Client certificate authentication is only active when at least one client certificate is provided. If you want to
+	// reject all client certificates sent by the server, you need to provide a client certificate with an `origin` that
+	// does not match any of the domains you plan to visit.
 	// **NOTE** When using WebKit on macOS, accessing `localhost` will not pick up client certificates. You can make it
 	// work by replacing `localhost` with `local.playwright`.
 	ClientCertificates []ClientCertificate `json:"clientCertificates"`
@@ -931,18 +1068,15 @@ type BrowserTypeLaunchPersistentContextOptions struct {
 	//
 	// [prefers-colors-scheme]: https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme
 	ColorScheme *ColorScheme `json:"colorScheme"`
+	// Emulates `prefers-contrast` media feature, supported values are `no-preference`, `more`. See
+	// [Page.EmulateMedia] for more details. Passing `no-override` resets emulation to system defaults. Defaults to
+	// `no-preference`.
+	Contrast *Contrast `json:"contrast"`
 	// Specify device scale factor (can be thought of as dpr). Defaults to `1`. Learn more about
 	// [emulating devices with device scale factor].
 	//
 	// [emulating devices with device scale factor]: https://playwright.dev/docs/emulation#devices
 	DeviceScaleFactor *float64 `json:"deviceScaleFactor"`
-	// **Chromium-only** Whether to auto-open a Developer Tools panel for each tab. If this option is `true`, the
-	// “[object Object]” option will be set `false`.
-	//
-	// Deprecated: Use [debugging tools] instead.
-	//
-	// [debugging tools]: https://playwright.dev/docs/debug
-	Devtools *bool `json:"devtools"`
 	// If specified, accepted downloads are downloaded into this directory. Otherwise, temporary directory is created and
 	// is deleted when browser is closed. In either case, the downloads are deleted when the browser context they were
 	// created in is closed.
@@ -957,9 +1091,12 @@ type BrowserTypeLaunchPersistentContextOptions struct {
 	ExtraHttpHeaders map[string]string `json:"extraHTTPHeaders"`
 	// Firefox user preferences. Learn more about the Firefox user preferences at
 	// [`about:config`].
+	// You can also provide a path to a custom [`policies.json` file] via
+	// `PLAYWRIGHT_FIREFOX_POLICIES_JSON` environment variable.
 	//
 	// [`about:config`]: https://support.mozilla.org/en-US/kb/about-config-editor-firefox
-	FirefoxUserPrefs map[string]interface{} `json:"firefoxUserPrefs"`
+	// [`policies.json` file]: https://mozilla.github.io/policy-templates/
+	FirefoxUserPrefs map[string]any `json:"firefoxUserPrefs"`
 	// Emulates `forced-colors` media feature, supported values are `active`, `none`. See [Page.EmulateMedia] for
 	// more details. Passing `no-override` resets emulation to system defaults. Defaults to `none`.
 	ForcedColors *ForcedColors `json:"forcedColors"`
@@ -977,8 +1114,7 @@ type BrowserTypeLaunchPersistentContextOptions struct {
 	HasTouch *bool `json:"hasTouch"`
 	// Whether to run browser in headless mode. More details for
 	// [Chromium] and
-	// [Firefox]. Defaults to `true` unless the
-	// “[object Object]” option is `true`.
+	// [Firefox]. Defaults to `true`.
 	//
 	// [Chromium]: https://developers.google.com/web/updates/2017/04/headless-chrome
 	// [Firefox]: https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/
@@ -1039,8 +1175,8 @@ type BrowserTypeLaunchPersistentContextOptions struct {
 	// to be saved.
 	//
 	// [HAR]: http://www.softwareishard.com/blog/har-12-spec
-	RecordHarPath      *string     `json:"recordHarPath"`
-	RecordHarURLFilter interface{} `json:"recordHarUrlFilter"`
+	RecordHarPath      *string `json:"recordHarPath"`
+	RecordHarURLFilter any     `json:"recordHarUrlFilter"`
 	// Enables video recording for all pages into `recordVideo.dir` directory. If not specified videos are not recorded.
 	// Make sure to await [BrowserContext.Close] for videos to be saved.
 	RecordVideo *RecordVideo `json:"recordVideo"`
@@ -1087,17 +1223,63 @@ type BrowserTypeLaunchPersistentContextOptions struct {
 }
 
 type ClockInstallOptions struct {
-	// Time to initialize with, current system time by default.
-	Time interface{} `json:"time"`
+	// Time to initialize with, current system time by default. Numeric values are Unix time in milliseconds.
+	Time any `json:"time"`
 }
 
 type ConsoleMessageLocation struct {
 	// URL of the resource.
 	URL string `json:"url"`
 	// 0-based line number in the resource.
-	LineNumber int `json:"lineNumber"`
+	Line int `json:"line"`
 	// 0-based column number in the resource.
+	Column int `json:"column"`
+	// 0-based line number in the resource. Deprecated, use `line` instead.
+	LineNumber int `json:"lineNumber"`
+	// 0-based column number in the resource. Deprecated, use `column` instead.
 	ColumnNumber int `json:"columnNumber"`
+}
+
+type VirtualCredential struct {
+	// Base64url-encoded credential id.
+	Id string `json:"id"`
+	// Relying party id.
+	RpId string `json:"rpId"`
+	// Base64url-encoded user handle.
+	UserHandle string `json:"userHandle"`
+	// Base64url-encoded PKCS#8 (DER) private key.
+	PrivateKey string `json:"privateKey"`
+	// Base64url-encoded SPKI (DER) public key.
+	PublicKey string `json:"publicKey"`
+}
+
+type CredentialsCreateOptions struct {
+	// Base64url-encoded credential id. Auto-generated if omitted.
+	Id *string `json:"id"`
+	// Base64url-encoded PKCS#8 (DER) private key. Auto-generated if omitted.
+	PrivateKey *string `json:"privateKey"`
+	// Base64url-encoded SPKI (DER) public key. Auto-generated if omitted.
+	PublicKey *string `json:"publicKey"`
+	// Base64url-encoded user handle. Auto-generated if omitted.
+	UserHandle *string `json:"userHandle"`
+}
+
+type CredentialsGetOptions struct {
+	// Only return the credential with this base64url-encoded id.
+	Id *string `json:"id"`
+	// Only return credentials for this relying party id.
+	RpId *string `json:"rpId"`
+}
+
+type PausedDetail struct {
+	Location *PausedDetailLocation `json:"location"`
+	Title    string                `json:"title"`
+}
+
+type DebuggerLocation struct {
+	File   string `json:"file"`
+	Line   *int   `json:"line"`
+	Column *int   `json:"column"`
 }
 
 type Rect struct {
@@ -1123,6 +1305,11 @@ type ElementHandleCheckOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -1157,6 +1344,14 @@ type ElementHandleClickOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
+	// Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+	// position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
+	Steps *int `json:"steps"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -1187,6 +1382,14 @@ type ElementHandleDblclickOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
+	// Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+	// position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
+	Steps *int `json:"steps"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -1227,6 +1430,11 @@ type ElementHandleHoverOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -1238,8 +1446,8 @@ type ElementHandleHoverOptions struct {
 }
 
 type ElementHandleInputValueOptions struct {
-	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
-	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
+	//
+	// Deprecated: This option is ignored. The value is returned immediately.
 	Timeout *float64 `json:"timeout"`
 }
 
@@ -1286,7 +1494,8 @@ type ElementHandleScreenshotOptions struct {
 	// is a relative path, then it is resolved relative to the current working directory. If no path is provided, the
 	// image won't be saved to the disk.
 	Path *string `json:"path"`
-	// The quality of the image, between 0-100. Not applicable to `png` images.
+	// The quality of the image, between 0-100. Not applicable to `png` images. For `jpeg` the default is `80`. For
+	// `webp`, a quality of `100` (the default) produces a lossless image, while lower values use lossy compression.
 	Quality *int `json:"quality"`
 	// When set to `"css"`, screenshot will have a single pixel per each css pixel on the page. For high-dpi devices, this
 	// will keep screenshots small. Using `"device"` option will produce a single pixel per each device pixel, so
@@ -1346,6 +1555,11 @@ type ElementHandleSetCheckedOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -1382,6 +1596,11 @@ type ElementHandleTapOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -1416,6 +1635,11 @@ type ElementHandleUncheckOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -1496,6 +1720,11 @@ type FrameCheckOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -1533,6 +1762,14 @@ type FrameClickOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
+	// Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+	// position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
+	Steps *int `json:"steps"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -1568,6 +1805,11 @@ type FrameDblclickOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -1601,9 +1843,17 @@ type FrameDragAndDropOptions struct {
 	//
 	// Deprecated: This option has no effect.
 	NoWaitAfter *bool `json:"noWaitAfter"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Clicks on the source element at this point relative to the top-left corner of the element's padding box. If not
 	// specified, some visible point of the element is used.
 	SourcePosition *Position `json:"sourcePosition"`
+	// Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between the `mousedown` and `mouseup`
+	// of the drag. When set to 1, emits a single `mousemove` event at the destination location.
+	Steps *int `json:"steps"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -1685,14 +1935,21 @@ type FrameGetByRoleOptions struct {
 	//
 	// [`aria-checked`]: https://www.w3.org/TR/wai-aria-1.2/#aria-checked
 	Checked *bool `json:"checked"`
+	// Option to match the [accessible description]. By
+	// default, matching is case-insensitive and searches for a substring, use “[object Object]” to control this behavior.
+	// Learn more about [accessible description].
+	//
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	Description any `json:"description"`
 	// An attribute that is usually set by `aria-disabled` or `disabled`.
 	// **NOTE** Unlike most other attributes, `disabled` is inherited through the DOM hierarchy. Learn more about
 	// [`aria-disabled`].
 	//
 	// [`aria-disabled`]: https://www.w3.org/TR/wai-aria-1.2/#aria-disabled
 	Disabled *bool `json:"disabled"`
-	// Whether “[object Object]” is matched exactly: case-sensitive and whole-string. Defaults to false. Ignored when
-	// “[object Object]” is a regular expression. Note that exact match still trims whitespace.
+	// Whether “[object Object]” and “[object Object]” are matched exactly: case-sensitive and whole-string. Defaults to
+	// false. Ignored when the value is a regular expression. Note that exact match still trims whitespace.
 	Exact *bool `json:"exact"`
 	// An attribute that is usually set by `aria-expanded`.
 	// Learn more about [`aria-expanded`].
@@ -1718,7 +1975,7 @@ type FrameGetByRoleOptions struct {
 	//
 	// [accessible name]: https://w3c.github.io/accname/#dfn-accessible-name
 	// [accessible name]: https://w3c.github.io/accname/#dfn-accessible-name
-	Name interface{} `json:"name"`
+	Name any `json:"name"`
 	// An attribute that is usually set by `aria-pressed`.
 	// Learn more about [`aria-pressed`].
 	//
@@ -1777,6 +2034,11 @@ type FrameHoverOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -1888,11 +2150,11 @@ type FrameLocatorOptions struct {
 	HasNot Locator `json:"hasNot"`
 	// Matches elements that do not contain specified text somewhere inside, possibly in a child or a descendant element.
 	// When passed a [string], matching is case-insensitive and searches for a substring.
-	HasNotText interface{} `json:"hasNotText"`
+	HasNotText any `json:"hasNotText"`
 	// Matches elements containing specified text somewhere inside, possibly in a child or a descendant element. When
 	// passed a [string], matching is case-insensitive and searches for a substring. For example, `"Playwright"` matches
 	// `<article><div>Playwright</div></article>`.
-	HasText interface{} `json:"hasText"`
+	HasText any `json:"hasText"`
 }
 
 type FramePressOptions struct {
@@ -1947,6 +2209,11 @@ type FrameSetCheckedOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -2004,6 +2271,11 @@ type FrameTapOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -2055,6 +2327,11 @@ type FrameUncheckOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -2072,7 +2349,7 @@ type FrameWaitForFunctionOptions struct {
 	// If “[object Object]” is `raf`, then “[object Object]” is constantly executed in `requestAnimationFrame` callback.
 	// If “[object Object]” is a number, then it is treated as an interval in milliseconds at which the function would be
 	// executed. Defaults to `raf`.
-	Polling interface{} `json:"polling"`
+	Polling any `json:"polling"`
 	// Maximum time to wait for in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The
 	// default value can be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -2097,10 +2374,10 @@ type FrameExpectNavigationOptions struct {
 	// be changed by using the [BrowserContext.SetDefaultNavigationTimeout], [BrowserContext.SetDefaultTimeout],
 	// [Page.SetDefaultNavigationTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
-	// A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
+	// A glob pattern, regex pattern, or predicate receiving [URL] to match while waiting for the navigation. Note that if
 	// the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
 	// equal to the string.
-	URL interface{} `json:"url"`
+	URL any `json:"url"`
 	// When to consider operation succeeded, defaults to `load`. Events can be either:
 	//  - `domcontentloaded` - consider operation to be finished when the `DOMContentLoaded` event is fired.
 	//  - `load` - consider operation to be finished when the `load` event is fired.
@@ -2167,14 +2444,21 @@ type FrameLocatorGetByRoleOptions struct {
 	//
 	// [`aria-checked`]: https://www.w3.org/TR/wai-aria-1.2/#aria-checked
 	Checked *bool `json:"checked"`
+	// Option to match the [accessible description]. By
+	// default, matching is case-insensitive and searches for a substring, use “[object Object]” to control this behavior.
+	// Learn more about [accessible description].
+	//
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	Description any `json:"description"`
 	// An attribute that is usually set by `aria-disabled` or `disabled`.
 	// **NOTE** Unlike most other attributes, `disabled` is inherited through the DOM hierarchy. Learn more about
 	// [`aria-disabled`].
 	//
 	// [`aria-disabled`]: https://www.w3.org/TR/wai-aria-1.2/#aria-disabled
 	Disabled *bool `json:"disabled"`
-	// Whether “[object Object]” is matched exactly: case-sensitive and whole-string. Defaults to false. Ignored when
-	// “[object Object]” is a regular expression. Note that exact match still trims whitespace.
+	// Whether “[object Object]” and “[object Object]” are matched exactly: case-sensitive and whole-string. Defaults to
+	// false. Ignored when the value is a regular expression. Note that exact match still trims whitespace.
 	Exact *bool `json:"exact"`
 	// An attribute that is usually set by `aria-expanded`.
 	// Learn more about [`aria-expanded`].
@@ -2200,7 +2484,7 @@ type FrameLocatorGetByRoleOptions struct {
 	//
 	// [accessible name]: https://w3c.github.io/accname/#dfn-accessible-name
 	// [accessible name]: https://w3c.github.io/accname/#dfn-accessible-name
-	Name interface{} `json:"name"`
+	Name any `json:"name"`
 	// An attribute that is usually set by `aria-pressed`.
 	// Learn more about [`aria-pressed`].
 	//
@@ -2240,11 +2524,11 @@ type FrameLocatorLocatorOptions struct {
 	HasNot Locator `json:"hasNot"`
 	// Matches elements that do not contain specified text somewhere inside, possibly in a child or a descendant element.
 	// When passed a [string], matching is case-insensitive and searches for a substring.
-	HasNotText interface{} `json:"hasNotText"`
+	HasNotText any `json:"hasNotText"`
 	// Matches elements containing specified text somewhere inside, possibly in a child or a descendant element. When
 	// passed a [string], matching is case-insensitive and searches for a substring. For example, `"Playwright"` matches
 	// `<article><div>Playwright</div></article>`.
-	HasText interface{} `json:"hasText"`
+	HasText any `json:"hasText"`
 }
 
 type KeyboardPressOptions struct {
@@ -2258,9 +2542,18 @@ type KeyboardTypeOptions struct {
 }
 
 type LocatorAriaSnapshotOptions struct {
-	// Generate symbolic reference for each element. One can use `aria-ref=<ref>` locator immediately after capturing the
-	// snapshot to perform actions on the element.
-	Ref *bool `json:"ref"`
+	// When `true`, appends each element's bounding box as `[box=x,y,width,height]` to the snapshot. Coordinates are
+	// relative to the viewport, in CSS pixels, as returned by
+	// [`Element.getBoundingClientRect()`].
+	// Defaults to `false`.
+	//
+	// [`Element.getBoundingClientRect()`]: https://developer.mozilla.org/en-US/docs/Web/API/Element/getBoundingClientRect
+	Boxes *bool `json:"boxes"`
+	// When specified, limits the depth of the snapshot.
+	Depth *int `json:"depth"`
+	// When set to `"ai"`, returns a snapshot optimized for AI consumption. Defaults to `"default"`. See details for more
+	// information.
+	Mode *AriaSnapshotMode `json:"mode"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -2290,6 +2583,11 @@ type LocatorCheckOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -2338,6 +2636,14 @@ type LocatorClickOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
+	// Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+	// position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
+	Steps *int `json:"steps"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -2370,6 +2676,14 @@ type LocatorDblclickOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
+	// Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+	// position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
+	Steps *int `json:"steps"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -2397,9 +2711,17 @@ type LocatorDragToOptions struct {
 	//
 	// Deprecated: This option has no effect.
 	NoWaitAfter *bool `json:"noWaitAfter"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Clicks on the source element at this point relative to the top-left corner of the element's padding box. If not
 	// specified, some visible point of the element is used.
 	SourcePosition *Position `json:"sourcePosition"`
+	// Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between the `mousedown` and `mouseup`
+	// of the drag. When set to 1, emits a single `mousemove` event at the destination location.
+	Steps *int `json:"steps"`
 	// Drops on the target element at this point relative to the top-left corner of the element's padding box. If not
 	// specified, some visible point of the element is used.
 	TargetPosition *Position `json:"targetPosition"`
@@ -2411,6 +2733,20 @@ type LocatorDragToOptions struct {
 	//
 	// [actionability]: https://playwright.dev/docs/actionability
 	Trial *bool `json:"trial"`
+}
+
+type Payload struct {
+	Files any               `json:"files"`
+	Data  map[string]string `json:"data"`
+}
+
+type LocatorDropOptions struct {
+	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
+	// the element.
+	Position *Position `json:"position"`
+	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
+	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
+	Timeout *float64 `json:"timeout"`
 }
 
 type LocatorElementHandleOptions struct {
@@ -2460,11 +2796,11 @@ type LocatorFilterOptions struct {
 	HasNot Locator `json:"hasNot"`
 	// Matches elements that do not contain specified text somewhere inside, possibly in a child or a descendant element.
 	// When passed a [string], matching is case-insensitive and searches for a substring.
-	HasNotText interface{} `json:"hasNotText"`
+	HasNotText any `json:"hasNotText"`
 	// Matches elements containing specified text somewhere inside, possibly in a child or a descendant element. When
 	// passed a [string], matching is case-insensitive and searches for a substring. For example, `"Playwright"` matches
 	// `<article><div>Playwright</div></article>`.
-	HasText interface{} `json:"hasText"`
+	HasText any `json:"hasText"`
 	// Only matches visible or invisible elements.
 	Visible *bool `json:"visible"`
 }
@@ -2505,14 +2841,21 @@ type LocatorGetByRoleOptions struct {
 	//
 	// [`aria-checked`]: https://www.w3.org/TR/wai-aria-1.2/#aria-checked
 	Checked *bool `json:"checked"`
+	// Option to match the [accessible description]. By
+	// default, matching is case-insensitive and searches for a substring, use “[object Object]” to control this behavior.
+	// Learn more about [accessible description].
+	//
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	Description any `json:"description"`
 	// An attribute that is usually set by `aria-disabled` or `disabled`.
 	// **NOTE** Unlike most other attributes, `disabled` is inherited through the DOM hierarchy. Learn more about
 	// [`aria-disabled`].
 	//
 	// [`aria-disabled`]: https://www.w3.org/TR/wai-aria-1.2/#aria-disabled
 	Disabled *bool `json:"disabled"`
-	// Whether “[object Object]” is matched exactly: case-sensitive and whole-string. Defaults to false. Ignored when
-	// “[object Object]” is a regular expression. Note that exact match still trims whitespace.
+	// Whether “[object Object]” and “[object Object]” are matched exactly: case-sensitive and whole-string. Defaults to
+	// false. Ignored when the value is a regular expression. Note that exact match still trims whitespace.
 	Exact *bool `json:"exact"`
 	// An attribute that is usually set by `aria-expanded`.
 	// Learn more about [`aria-expanded`].
@@ -2538,7 +2881,7 @@ type LocatorGetByRoleOptions struct {
 	//
 	// [accessible name]: https://w3c.github.io/accname/#dfn-accessible-name
 	// [accessible name]: https://w3c.github.io/accname/#dfn-accessible-name
-	Name interface{} `json:"name"`
+	Name any `json:"name"`
 	// An attribute that is usually set by `aria-pressed`.
 	// Learn more about [`aria-pressed`].
 	//
@@ -2579,6 +2922,11 @@ type LocatorHoverOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -2660,11 +3008,11 @@ type LocatorLocatorOptions struct {
 	HasNot Locator `json:"hasNot"`
 	// Matches elements that do not contain specified text somewhere inside, possibly in a child or a descendant element.
 	// When passed a [string], matching is case-insensitive and searches for a substring.
-	HasNotText interface{} `json:"hasNotText"`
+	HasNotText any `json:"hasNotText"`
 	// Matches elements containing specified text somewhere inside, possibly in a child or a descendant element. When
 	// passed a [string], matching is case-insensitive and searches for a substring. For example, `"Playwright"` matches
 	// `<article><div>Playwright</div></article>`.
-	HasText interface{} `json:"hasText"`
+	HasText any `json:"hasText"`
 }
 
 type LocatorPressOptions struct {
@@ -2722,7 +3070,8 @@ type LocatorScreenshotOptions struct {
 	// is a relative path, then it is resolved relative to the current working directory. If no path is provided, the
 	// image won't be saved to the disk.
 	Path *string `json:"path"`
-	// The quality of the image, between 0-100. Not applicable to `png` images.
+	// The quality of the image, between 0-100. Not applicable to `png` images. For `jpeg` the default is `80`. For
+	// `webp`, a quality of `100` (the default) produces a lossless image, while lower values use lossy compression.
 	Quality *int `json:"quality"`
 	// When set to `"css"`, screenshot will have a single pixel per each css pixel on the page. For high-dpi devices, this
 	// will keep screenshots small. Using `"device"` option will produce a single pixel per each device pixel, so
@@ -2782,6 +3131,11 @@ type LocatorSetCheckedOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -2818,6 +3172,11 @@ type LocatorTapOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -2860,6 +3219,11 @@ type LocatorUncheckOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -2881,6 +3245,12 @@ type LocatorWaitForOptions struct {
 	State *WaitForSelectorState `json:"state"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
+	Timeout *float64 `json:"timeout"`
+}
+
+type LocatorWaitForFunctionOptions struct {
+	// Maximum time to wait for in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The
+	// default value can be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
 }
 
@@ -3005,6 +3375,8 @@ type LocatorAssertionsToHaveCountOptions struct {
 }
 
 type LocatorAssertionsToHaveCSSOptions struct {
+	// Pseudo-element to read computed styles from.
+	Pseudo *PseudoElement `json:"pseudo"`
 	// Time to retry the assertion for in milliseconds. Defaults to `5000`.
 	Timeout *float64 `json:"timeout"`
 }
@@ -3073,7 +3445,8 @@ type MouseDownOptions struct {
 }
 
 type MouseMoveOptions struct {
-	// Defaults to 1. Sends intermediate `mousemove` events.
+	// Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+	// position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
 	Steps *int `json:"steps"`
 }
 
@@ -3121,6 +3494,11 @@ type PageCheckOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -3158,6 +3536,14 @@ type PageClickOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
+	// Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+	// position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
+	Steps *int `json:"steps"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -3203,6 +3589,11 @@ type PageDblclickOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -3236,9 +3627,17 @@ type PageDragAndDropOptions struct {
 	//
 	// Deprecated: This option has no effect.
 	NoWaitAfter *bool `json:"noWaitAfter"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// Clicks on the source element at this point relative to the top-left corner of the element's padding box. If not
 	// specified, some visible point of the element is used.
 	SourcePosition *Position `json:"sourcePosition"`
+	// Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between the `mousedown` and `mouseup`
+	// of the drag. When set to 1, emits a single `mousemove` event at the destination location.
+	Steps *int `json:"steps"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -3312,7 +3711,7 @@ type PageFrameOptions struct {
 	// Frame name specified in the `iframe`'s `name` attribute. Optional.
 	Name *string `json:"name"`
 	// A glob pattern, regex pattern or predicate receiving frame's `url` as a [URL] object. Optional.
-	URL interface{} `json:"url"`
+	URL any `json:"url"`
 }
 
 type PageGetAttributeOptions struct {
@@ -3348,14 +3747,21 @@ type PageGetByRoleOptions struct {
 	//
 	// [`aria-checked`]: https://www.w3.org/TR/wai-aria-1.2/#aria-checked
 	Checked *bool `json:"checked"`
+	// Option to match the [accessible description]. By
+	// default, matching is case-insensitive and searches for a substring, use “[object Object]” to control this behavior.
+	// Learn more about [accessible description].
+	//
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	Description any `json:"description"`
 	// An attribute that is usually set by `aria-disabled` or `disabled`.
 	// **NOTE** Unlike most other attributes, `disabled` is inherited through the DOM hierarchy. Learn more about
 	// [`aria-disabled`].
 	//
 	// [`aria-disabled`]: https://www.w3.org/TR/wai-aria-1.2/#aria-disabled
 	Disabled *bool `json:"disabled"`
-	// Whether “[object Object]” is matched exactly: case-sensitive and whole-string. Defaults to false. Ignored when
-	// “[object Object]” is a regular expression. Note that exact match still trims whitespace.
+	// Whether “[object Object]” and “[object Object]” are matched exactly: case-sensitive and whole-string. Defaults to
+	// false. Ignored when the value is a regular expression. Note that exact match still trims whitespace.
 	Exact *bool `json:"exact"`
 	// An attribute that is usually set by `aria-expanded`.
 	// Learn more about [`aria-expanded`].
@@ -3381,7 +3787,7 @@ type PageGetByRoleOptions struct {
 	//
 	// [accessible name]: https://w3c.github.io/accname/#dfn-accessible-name
 	// [accessible name]: https://w3c.github.io/accname/#dfn-accessible-name
-	Name interface{} `json:"name"`
+	Name any `json:"name"`
 	// An attribute that is usually set by `aria-pressed`.
 	// Learn more about [`aria-pressed`].
 	//
@@ -3470,6 +3876,11 @@ type PageHoverOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -3566,6 +3977,11 @@ type PageIsVisibleOptions struct {
 	Timeout *float64 `json:"timeout"`
 }
 
+type PageConsoleMessagesOptions struct {
+	// Controls which messages are returned:
+	Filter *ConsoleMessagesFilter `json:"filter"`
+}
+
 type PageLocatorOptions struct {
 	// Narrows down the results of the method to those which contain elements matching this relative locator. For example,
 	// `article` that has `text=Playwright` matches `<article><div>Playwright</div></article>`.
@@ -3581,11 +3997,11 @@ type PageLocatorOptions struct {
 	HasNot Locator `json:"hasNot"`
 	// Matches elements that do not contain specified text somewhere inside, possibly in a child or a descendant element.
 	// When passed a [string], matching is case-insensitive and searches for a substring.
-	HasNotText interface{} `json:"hasNotText"`
+	HasNotText any `json:"hasNotText"`
 	// Matches elements containing specified text somewhere inside, possibly in a child or a descendant element. When
 	// passed a [string], matching is case-insensitive and searches for a substring. For example, `"Playwright"` matches
 	// `<article><div>Playwright</div></article>`.
-	HasText interface{} `json:"hasText"`
+	HasText any `json:"hasText"`
 }
 
 type PagePdfOptions struct {
@@ -3694,7 +4110,7 @@ type PageRouteFromHAROptions struct {
 	UpdateMode *HarMode `json:"updateMode"`
 	// A glob pattern, regular expression or predicate to match the request URL. Only requests with URL matching the
 	// pattern will be served from the HAR file. If not specified, all requests are served from the HAR file.
-	URL interface{} `json:"url"`
+	URL any `json:"url"`
 }
 
 type PageScreenshotOptions struct {
@@ -3731,7 +4147,8 @@ type PageScreenshotOptions struct {
 	// is a relative path, then it is resolved relative to the current working directory. If no path is provided, the
 	// image won't be saved to the disk.
 	Path *string `json:"path"`
-	// The quality of the image, between 0-100. Not applicable to `png` images.
+	// The quality of the image, between 0-100. Not applicable to `png` images. For `jpeg` the default is `80`. For
+	// `webp`, a quality of `100` (the default) produces a lossless image, while lower values use lossy compression.
 	Quality *int `json:"quality"`
 	// When set to `"css"`, screenshot will have a single pixel per each css pixel on the page. For high-dpi devices, this
 	// will keep screenshots small. Using `"device"` option will produce a single pixel per each device pixel, so
@@ -3778,6 +4195,11 @@ type PageSetCheckedOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -3819,6 +4241,24 @@ type PageSetInputFilesOptions struct {
 	Timeout *float64 `json:"timeout"`
 }
 
+type PageAriaSnapshotOptions struct {
+	// When `true`, appends each element's bounding box as `[box=x,y,width,height]` to the snapshot. Coordinates are
+	// relative to the viewport, in CSS pixels, as returned by
+	// [`Element.getBoundingClientRect()`].
+	// Defaults to `false`.
+	//
+	// [`Element.getBoundingClientRect()`]: https://developer.mozilla.org/en-US/docs/Web/API/Element/getBoundingClientRect
+	Boxes *bool `json:"boxes"`
+	// When specified, limits the depth of the snapshot.
+	Depth *int `json:"depth"`
+	// When set to `"ai"`, returns a snapshot optimized for AI consumption: including element references like `[ref=e2]`
+	// and snapshots of `<iframe>`s. Defaults to `"default"`.
+	Mode *AriaSnapshotMode `json:"mode"`
+	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
+	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
+	Timeout *float64 `json:"timeout"`
+}
+
 type PageTapOptions struct {
 	// Whether to bypass the [actionability] checks. Defaults to `false`.
 	//
@@ -3835,6 +4275,11 @@ type PageTapOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -3886,6 +4331,11 @@ type PageUncheckOptions struct {
 	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
 	// the element.
 	Position *Position `json:"position"`
+	// Controls whether Playwright scrolls the element into view before performing the action. Defaults to `"auto"`, which
+	// scrolls the element into view when necessary, including scrolling nested scrollable containers. When set to
+	// `"none"`, Playwright does not scroll the element and the action fails if the element is not already in the
+	// viewport. This is useful to assert that an element is reachable by the user without additional scrolling.
+	Scroll *ScrollMode `json:"scroll"`
 	// When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
 	// element, the call throws an exception.
 	Strict *bool `json:"strict"`
@@ -3934,7 +4384,7 @@ type PageExpectDownloadOptions struct {
 
 type PageExpectEventOptions struct {
 	// Receives the event data and resolves to truthy value when the waiting should resolve.
-	Predicate interface{} `json:"predicate"`
+	Predicate any `json:"predicate"`
 	// Maximum time to wait for in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The
 	// default value can be changed by using the [BrowserContext.SetDefaultTimeout].
 	Timeout *float64 `json:"timeout"`
@@ -3952,7 +4402,7 @@ type PageWaitForFunctionOptions struct {
 	// If “[object Object]” is `raf`, then “[object Object]” is constantly executed in `requestAnimationFrame` callback.
 	// If “[object Object]” is a number, then it is treated as an interval in milliseconds at which the function would be
 	// executed. Defaults to `raf`.
-	Polling interface{} `json:"polling"`
+	Polling any `json:"polling"`
 	// Maximum time to wait for in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The
 	// default value can be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -3977,10 +4427,10 @@ type PageExpectNavigationOptions struct {
 	// be changed by using the [BrowserContext.SetDefaultNavigationTimeout], [BrowserContext.SetDefaultTimeout],
 	// [Page.SetDefaultNavigationTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
-	// A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
+	// A glob pattern, regex pattern, or predicate receiving [URL] to match while waiting for the navigation. Note that if
 	// the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
 	// equal to the string.
-	URL interface{} `json:"url"`
+	URL any `json:"url"`
 	// When to consider operation succeeded, defaults to `load`. Events can be either:
 	//  - `domcontentloaded` - consider operation to be finished when the `DOMContentLoaded` event is fired.
 	//  - `load` - consider operation to be finished when the `load` event is fired.
@@ -4069,9 +4519,14 @@ type PageExpectWorkerOptions struct {
 
 type PageWaitForEventOptions struct {
 	// Receives the event data and resolves to truthy value when the waiting should resolve.
-	Predicate interface{} `json:"predicate"`
+	Predicate any `json:"predicate"`
 	// Maximum time to wait for in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The
 	// default value can be changed by using the [BrowserContext.SetDefaultTimeout].
+	Timeout *float64 `json:"timeout"`
+}
+
+type PageAssertionsToMatchAriaSnapshotOptions struct {
+	// Time to retry the assertion for in milliseconds. Defaults to `5000`.
 	Timeout *float64 `json:"timeout"`
 }
 
@@ -4101,64 +4556,13 @@ type RequestSizesResult struct {
 	ResponseHeadersSize int `json:"responseHeadersSize"`
 }
 
-type RequestTiming struct {
-	// Request start time in milliseconds elapsed since January 1, 1970 00:00:00 UTC
-	StartTime float64 `json:"startTime"`
-	// Time immediately before the browser starts the domain name lookup for the resource. The value is given in
-	// milliseconds relative to `startTime`, -1 if not available.
-	DomainLookupStart float64 `json:"domainLookupStart"`
-	// Time immediately after the browser starts the domain name lookup for the resource. The value is given in
-	// milliseconds relative to `startTime`, -1 if not available.
-	DomainLookupEnd float64 `json:"domainLookupEnd"`
-	// Time immediately before the user agent starts establishing the connection to the server to retrieve the resource.
-	// The value is given in milliseconds relative to `startTime`, -1 if not available.
-	ConnectStart float64 `json:"connectStart"`
-	// Time immediately before the browser starts the handshake process to secure the current connection. The value is
-	// given in milliseconds relative to `startTime`, -1 if not available.
-	SecureConnectionStart float64 `json:"secureConnectionStart"`
-	// Time immediately before the user agent starts establishing the connection to the server to retrieve the resource.
-	// The value is given in milliseconds relative to `startTime`, -1 if not available.
-	ConnectEnd float64 `json:"connectEnd"`
-	// Time immediately before the browser starts requesting the resource from the server, cache, or local resource. The
-	// value is given in milliseconds relative to `startTime`, -1 if not available.
-	RequestStart float64 `json:"requestStart"`
-	// Time immediately after the browser receives the first byte of the response from the server, cache, or local
-	// resource. The value is given in milliseconds relative to `startTime`, -1 if not available.
-	ResponseStart float64 `json:"responseStart"`
-	// Time immediately after the browser receives the last byte of the resource or immediately before the transport
-	// connection is closed, whichever comes first. The value is given in milliseconds relative to `startTime`, -1 if not
-	// available.
-	ResponseEnd float64 `json:"responseEnd"`
-}
-
-type ResponseSecurityDetailsResult struct {
-	// Common Name component of the Issuer field. from the certificate. This should only be used for informational
-	// purposes. Optional.
-	Issuer *string `json:"issuer"`
-	// The specific TLS protocol used. (e.g. `TLS 1.3`). Optional.
-	Protocol *string `json:"protocol"`
-	// Common Name component of the Subject field from the certificate. This should only be used for informational
-	// purposes. Optional.
-	SubjectName *string `json:"subjectName"`
-	// Unix timestamp (in seconds) specifying when this cert becomes valid. Optional.
-	ValidFrom *float64 `json:"validFrom"`
-	// Unix timestamp (in seconds) specifying when this cert becomes invalid. Optional.
-	ValidTo *float64 `json:"validTo"`
-}
-
-type ResponseServerAddrResult struct {
-	// IPv4 or IPV6 address of the server.
-	IpAddress string `json:"ipAddress"`
-	Port      int    `json:"port"`
-}
-
 type RouteContinueOptions struct {
 	// If set changes the request HTTP headers. Header values will be converted to a string.
 	Headers map[string]string `json:"headers"`
 	// If set changes the request method (e.g. GET or POST).
 	Method *string `json:"method"`
 	// If set changes the post data of request.
-	PostData interface{} `json:"postData"`
+	PostData any `json:"postData"`
 	// If set changes the request URL. New URL must have same protocol as original one.
 	URL *string `json:"url"`
 }
@@ -4169,7 +4573,7 @@ type RouteFallbackOptions struct {
 	// If set changes the request method (e.g. GET or POST).
 	Method *string `json:"method"`
 	// If set changes the post data of request.
-	PostData interface{} `json:"postData"`
+	PostData any `json:"postData"`
 	// If set changes the request URL. New URL must have same protocol as original one. Changing the URL won't affect the
 	// route matching, all the routes are matched using the original request URL.
 	URL *string `json:"url"`
@@ -4187,7 +4591,7 @@ type RouteFetchOptions struct {
 	// If set changes the request method (e.g. GET or POST).
 	Method *string `json:"method"`
 	// If set changes the post data of request.
-	PostData interface{} `json:"postData"`
+	PostData any `json:"postData"`
 	// Request timeout in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout.
 	Timeout *float64 `json:"timeout"`
 	// If set changes the request URL. New URL must have same protocol as original one.
@@ -4196,7 +4600,7 @@ type RouteFetchOptions struct {
 
 type RouteFulfillOptions struct {
 	// Response body.
-	Body interface{} `json:"body"`
+	Body any `json:"body"`
 	// If set, equals to setting `Content-Type` response header.
 	ContentType *string `json:"contentType"`
 	// Response headers. Header values will be converted to a string.
@@ -4211,6 +4615,45 @@ type RouteFulfillOptions struct {
 	Status *int `json:"status"`
 }
 
+type ScreencastStartOptions struct {
+	// Callback that receives JPEG-encoded frame data along with the page viewport size at the time of capture.
+	OnFrame func(OnFrame) `json:"onFrame"`
+	// Path where the video should be saved when the screencast is stopped. When provided, video recording is started.
+	Path *string `json:"path"`
+	// The quality of the image, between 0-100.
+	Quality *int `json:"quality"`
+	// Specifies the dimensions of screencast frames. The actual frame is scaled to preserve the page's aspect ratio and
+	// may be smaller than these bounds. If a screencast is already active (e.g. started by tracing or video recording),
+	// the existing configuration takes precedence and the frame size may exceed these bounds or this option may be
+	// ignored. If not specified the size will be equal to page viewport scaled down to fit into 800×800.
+	Size *Size `json:"size"`
+}
+
+type ScreencastShowOverlayOptions struct {
+	// Duration in milliseconds after which the overlay is automatically removed. Overlay stays until dismissed if not
+	// provided.
+	Duration *float64 `json:"duration"`
+}
+
+type ScreencastShowChapterOptions struct {
+	// Optional description text displayed below the title.
+	Description *string `json:"description"`
+	// Duration in milliseconds after which the overlay is automatically removed. Defaults to `2000`.
+	Duration *float64 `json:"duration"`
+}
+
+type ScreencastShowActionsOptions struct {
+	// Cursor decoration shown for pointer actions. `"pointer"` (the default) renders a mouse pointer that animates from
+	// the previous action point to the next one. `"none"` disables the cursor decoration.
+	Cursor *ScreencastCursor `json:"cursor"`
+	// How long each annotation is displayed in milliseconds. Defaults to `500`.
+	Duration *float64 `json:"duration"`
+	// Font size of the action title in pixels. Defaults to `24`.
+	FontSize *int `json:"fontSize"`
+	// Position of the action title overlay. Defaults to `"top-right"`.
+	Position *AnnotatePosition `json:"position"`
+}
+
 type SelectorsRegisterOptions struct {
 	// Whether to run this selector engine in isolated JavaScript environment. This environment has access to the same
 	// DOM, but not any JavaScript objects from the frame's scripts. Defaults to `false`. Note that running as a content
@@ -4219,6 +4662,10 @@ type SelectorsRegisterOptions struct {
 }
 
 type TracingStartOptions struct {
+	// When enabled, the trace is written to an unarchived file that is updated in real time as actions occur, instead of
+	// caching changes and archiving them into a zip file at the end. This is useful for live trace viewing during test
+	// execution.
+	Live *bool `json:"live"`
 	// If specified, intermediate trace files are going to be saved into the files with the given name prefix inside the
 	// “[object Object]” directory specified in [BrowserType.Launch]. To specify the final trace zip file name, you need
 	// to pass `path` option to [Tracing.Stop] instead.
@@ -4244,15 +4691,40 @@ type TracingStartChunkOptions struct {
 	Title *string `json:"title"`
 }
 
+type TracingStartHarOptions struct {
+	// Optional setting to control resource content management. If `omit` is specified, content is not persisted. If
+	// `attach` is specified, resources are persisted as separate files or entries in the ZIP archive. If `embed` is
+	// specified, content is stored inline the HAR file as per HAR specification. Defaults to `attach` for `.zip` output
+	// files and to `embed` for all other file extensions.
+	Content *HarContentPolicy `json:"content"`
+	// When set to `minimal`, only record information necessary for routing from HAR. This omits sizes, timing, page,
+	// cookies, security and other types of HAR information that are not used when replaying from HAR. Defaults to `full`.
+	Mode *HarMode `json:"mode"`
+	// Only used together with `content: 'attach'`. When set, response bodies are placed in this directory instead of next
+	// to the HAR file. Not compatible with a `.zip` HAR file.
+	ResourcesDir *string `json:"resourcesDir"`
+	// A glob or regex pattern to filter requests that are stored in the HAR. Defaults to none.
+	URLFilter any `json:"urlFilter"`
+}
+
 type TracingGroupOptions struct {
 	// Specifies a custom location for the group to be shown in the trace viewer. Defaults to the location of the
 	// [Tracing.Group] call.
 	Location *TracingGroupOptionsLocation `json:"location"`
 }
 
+type WebErrorLocation struct {
+	// URL of the resource.
+	URL string `json:"url"`
+	// 0-based line number in the resource.
+	Line int `json:"line"`
+	// 0-based column number in the resource.
+	Column int `json:"column"`
+}
+
 type WebSocketExpectEventOptions struct {
 	// Receives the event data and resolves to truthy value when the waiting should resolve.
-	Predicate interface{} `json:"predicate"`
+	Predicate any `json:"predicate"`
 	// Maximum time to wait for in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The
 	// default value can be changed by using the [BrowserContext.SetDefaultTimeout].
 	Timeout *float64 `json:"timeout"`
@@ -4260,7 +4732,7 @@ type WebSocketExpectEventOptions struct {
 
 type WebSocketWaitForEventOptions struct {
 	// Receives the event data and resolves to truthy value when the waiting should resolve.
-	Predicate interface{} `json:"predicate"`
+	Predicate any `json:"predicate"`
 	// Maximum time to wait for in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The
 	// default value can be changed by using the [BrowserContext.SetDefaultTimeout].
 	Timeout *float64 `json:"timeout"`
@@ -4275,6 +4747,11 @@ type WebSocketRouteCloseOptions struct {
 	//
 	// [close reason]: https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/close#reason
 	Reason *string `json:"reason"`
+}
+
+type WebStorageItem struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type ClientCertificate struct {
@@ -4326,12 +4803,15 @@ type Origin struct {
 }
 
 type RecordVideo struct {
-	// Path to the directory to put videos into.
-	Dir string `json:"dir"`
+	// Path to the directory to put videos into. If not specified, the videos will be stored in `artifactsDir` (see
+	// [BrowserType.Launch] options).
+	Dir *string `json:"dir"`
 	// Optional dimensions of the recorded videos. If not specified the size will be equal to `viewport` scaled down to
 	// fit into 800x800. If `viewport` is not configured explicitly the video size defaults to 800x450. Actual picture of
 	// each page will be scaled down if necessary to fit the specified size.
 	Size *Size `json:"size"`
+	// If specified, enables visual annotations on interacted elements during video recording.
+	ShowActions *ShowAction `json:"showActions"`
 }
 
 type OptionalStorageState struct {
@@ -4339,6 +4819,14 @@ type OptionalStorageState struct {
 	Cookies []OptionalCookie `json:"cookies"`
 	// localStorage to set for context
 	Origins []Origin `json:"origins"`
+	// Virtual WebAuthn credentials to seed into the context.
+	Credentials []VirtualCredential `json:"credentials"`
+}
+
+type PausedDetailLocation struct {
+	File   string `json:"file"`
+	Line   *int   `json:"line"`
+	Column *int   `json:"column"`
 }
 
 type Position struct {
@@ -4357,8 +4845,31 @@ type Margin struct {
 	Left *string `json:"left"`
 }
 
+type OnFrame struct {
+	// JPEG-encoded frame data.
+	Data []byte `json:"data"`
+	// The timestamp of when the frame was presented by the browser, in milliseconds since the Unix epoch.
+	Timestamp float64 `json:"timestamp"`
+	// Width of the page viewport at the time the frame was captured.
+	ViewportWidth int `json:"viewportWidth"`
+	// Height of the page viewport at the time the frame was captured.
+	ViewportHeight int `json:"viewportHeight"`
+}
+
 type TracingGroupOptionsLocation struct {
 	File   string `json:"file"`
 	Line   *int   `json:"line"`
 	Column *int   `json:"column"`
+}
+
+type ShowAction struct {
+	// How long each annotation is displayed in milliseconds. Defaults to `500`.
+	Duration *float64 `json:"duration"`
+	// Position of the action title overlay. Defaults to `"top-right"`.
+	Position *AnnotatePosition `json:"position"`
+	// Font size of the action title in pixels. Defaults to `24`.
+	FontSize *int `json:"fontSize"`
+	// Cursor decoration shown for pointer actions. `"pointer"` (the default) renders a mouse pointer that animates from
+	// the previous action point to the next one. `"none"` disables the cursor decoration.
+	Cursor *ScreencastCursor `json:"cursor"`
 }

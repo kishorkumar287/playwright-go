@@ -4,7 +4,7 @@ package playwright_test
 import (
 	"testing"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -298,6 +298,14 @@ func TestElementHandleString(t *testing.T) {
 	stringHandle, err := page.EvaluateHandle("() => 'a'")
 	require.NoError(t, err)
 	require.Equal(t, "a", stringHandle.String())
+
+	// A real ElementHandle renders its server-provided preview (not an empty
+	// string) — newElementHandle must initialize preview like newJSHandle.
+	require.NoError(t, page.SetContent(`<button>Submit</button>`))
+	//nolint:staticcheck
+	elementHandle, err := page.QuerySelector("button")
+	require.NoError(t, err)
+	require.NotEmpty(t, elementHandle.String())
 }
 
 func TestElementHandleCheck(t *testing.T) {
@@ -362,7 +370,8 @@ func TestElementHandleSelectOptionOverElementHandle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	selected2, err := page.Locator("#lang").SelectOption(
-		playwright.SelectOptionValues{Values: playwright.StringSlice("python")})
+		playwright.SelectOptionValues{Values: playwright.StringSlice("python")},
+	)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(selected))
 	require.Equal(t, "python", selected[0])

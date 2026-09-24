@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -105,7 +107,7 @@ func TestBrowserContextTracingRemoteConnect(t *testing.T) {
 	browser1, err := browserType.Connect(remoteServer.url)
 	require.NoError(t, err)
 	require.NotNil(t, browser1)
-	defer browser1.Close()
+	defer browser1.Close() //nolint:errcheck
 
 	context1, err := browser1.NewContext()
 	require.NoError(t, err)
@@ -163,12 +165,65 @@ func TestShouldShowTracingGroupInActionList(t *testing.T) {
 		}, actions)
 }
 
+// mapInternalAPIToPublic maps internal Playwright class.method names to public API names
+func mapInternalAPIToPublic(class, method string) string {
+	// Map internal classes to public API classes
+	classMethodKey := class + "." + method
+
+	// Common Frame methods that should map to Page
+	frameToPageMethods := map[string]bool{
+		"goto": true, "reload": true, "goBack": true, "goForward": true,
+		"setContent": true, "waitForNavigation": true, "waitForURL": true,
+		"waitForLoadState": true, "screenshot": true, "pdf": true,
+		"close": true, "pause": true,
+	}
+
+	// Frame selector/locator methods that should map to Locator
+	frameLocatorMethods := map[string]bool{
+		"click": true, "dblclick": true, "fill": true, "press": true,
+		"type": true, "hover": true, "check": true, "uncheck": true,
+		"selectOption": true, "setInputFiles": true, "focus": true,
+		"blur": true, "tap": true, "dispatchEvent": true, "evaluate": true,
+		"isVisible": true, "isHidden": true, "isEnabled": true, "isDisabled": true,
+		"isChecked": true, "isEditable": true, "textContent": true,
+		"innerText": true, "innerHTML": true, "getAttribute": true,
+	}
+
+	if class == "Frame" {
+		if frameToPageMethods[method] {
+			class = "Page"
+		} else if frameLocatorMethods[method] {
+			class = "Locator"
+		}
+	}
+
+	// Special case mappings
+	specialMappings := map[string]string{
+		"BrowserContext.newPage": "BrowserContext.NewPage",
+		"Page.waitForTimeout":    "Page.WaitForTimeout",
+	}
+
+	// Convert method to title case (first letter uppercase)
+	titleCaseMethod := strings.ToUpper(method[:1]) + method[1:]
+	apiName := class + "." + titleCaseMethod
+
+	// Check for special mappings
+	if mapped, ok := specialMappings[classMethodKey]; ok {
+		return mapped
+	}
+	if mapped, ok := specialMappings[apiName]; ok {
+		return mapped
+	}
+
+	return apiName
+}
+
 func parseTrace(t *testing.T, tracePath string) (files map[string][]byte, events []interface{}) {
 	t.Helper()
 	// read and unzip trace
 	r, err := zip.OpenReader(tracePath)
 	require.NoError(t, err)
-	defer r.Close()
+	defer r.Close() //nolint:errcheck
 
 	files = make(map[string][]byte)
 	events = make([]interface{}, 0)
@@ -176,7 +231,7 @@ func parseTrace(t *testing.T, tracePath string) (files map[string][]byte, events
 	for _, f := range r.File {
 		rc, err := f.Open()
 		require.NoError(t, err)
-		defer rc.Close()
+		defer rc.Close() //nolint:errcheck
 
 		buf := new(bytes.Buffer)
 		_, err = io.Copy(buf, rc)
@@ -193,15 +248,27 @@ func parseTrace(t *testing.T, tracePath string) (files map[string][]byte, events
 				var event map[string]interface{}
 				err := json.Unmarshal(line, &event)
 				require.NoError(t, err)
-				switch event["type"].(string) {
+				eventType, _ := event["type"].(string)
+
+				switch eventType {
 				case "before":
 					event["type"] = "action"
+					// Compute apiName from class and method for regular actions
+					// For tracing groups, use the title field
+					class, _ := event["class"].(string)
+					method, _ := event["method"].(string)
+					title, hasTitle := event["title"].(string)
+
+					if method == "tracingGroup" && hasTitle {
+						event["apiName"] = title
+					} else if class != "" && method != "" {
+						event["apiName"] = mapInternalAPIToPublic(class, method)
+					}
+
 					actionMap[event["callId"].(string)] = event
 					events = append(events, event)
 				case "input":
-					break
 				case "after":
-					break
 				default:
 					events = append(events, event)
 				}
@@ -233,7 +300,88 @@ func getTraceActions(events []interface{}) []string {
 	})
 	for _, e := range actionEvents {
 		event := e.(map[string]interface{})
-		actions = append(actions, event["apiName"].(string))
+		if apiName, ok := event["apiName"].(string); ok {
+			actions = append(actions, apiName)
+		}
 	}
 	return actions
+}
+
+// Ported from upstream tests/library/har.spec.ts "tracing.startHar" >
+// "should record a HAR with options".
+func TestTracingStartHarWithOptions(t *testing.T) {
+	BeforeEach(t)
+
+	harPath := filepath.Join(t.TempDir(), "tracing.har")
+	require.NoError(t, context.Tracing().StartHar(harPath, playwright.TracingStartHarOptions{
+		Mode:      playwright.HarModeMinimal,
+		URLFilter: "**/one-style.css",
+	}))
+	_, err := page.Goto(server.PREFIX + "/one-style.html")
+	require.NoError(t, err)
+	require.NoError(t, context.Tracing().StopHar())
+	require.FileExists(t, harPath)
+
+	data, err := os.ReadFile(harPath)
+	require.NoError(t, err)
+	var har struct {
+		Log struct {
+			Entries []struct {
+				Request struct {
+					URL      string  `json:"url"`
+					BodySize float64 `json:"bodySize"`
+				} `json:"request"`
+			} `json:"entries"`
+		} `json:"log"`
+	}
+	require.NoError(t, json.Unmarshal(data, &har))
+	urls := make([]string, 0, len(har.Log.Entries))
+	for _, e := range har.Log.Entries {
+		urls = append(urls, e.Request.URL)
+	}
+	require.Equal(t, []string{server.PREFIX + "/one-style.css"}, urls)
+	// Minimal mode drops body sizes.
+	require.Equal(t, float64(-1), har.Log.Entries[0].Request.BodySize)
+}
+
+// Ported from upstream "should record a zipped HAR for APIRequestContext",
+// adapted to a BrowserContext (the Go API exposes Tracing on both).
+func TestTracingStartHarZipped(t *testing.T) {
+	BeforeEach(t)
+
+	harPath := filepath.Join(t.TempDir(), "tracing.har.zip")
+	require.NoError(t, context.Tracing().StartHar(harPath, playwright.TracingStartHarOptions{
+		Content: playwright.HarContentPolicyAttach,
+	}))
+	_, err := page.Goto(server.PREFIX + "/one-style.html")
+	require.NoError(t, err)
+	require.NoError(t, context.Tracing().StopHar())
+	require.FileExists(t, harPath)
+
+	// The zip contains the har.har entry alongside attached resources.
+	zr, err := zip.OpenReader(harPath)
+	require.NoError(t, err)
+	defer zr.Close() //nolint:errcheck
+	var harEntry *zip.File
+	for _, f := range zr.File {
+		if f.Name == "har.har" {
+			harEntry = f
+			break
+		}
+	}
+	require.NotNil(t, harEntry, "zip should contain har.har")
+	rc, err := harEntry.Open()
+	require.NoError(t, err)
+	defer rc.Close() //nolint:errcheck
+	data, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.Contains(t, string(data), server.PREFIX+"/one-style.html")
+}
+
+// StopHar without a prior StartHar should error, mirroring upstream's
+// "HAR recording has not been started" guard.
+func TestTracingStopHarWithoutStart(t *testing.T) {
+	BeforeEach(t)
+
+	require.ErrorContains(t, context.Tracing().StopHar(), "HAR recording has not been started")
 }
